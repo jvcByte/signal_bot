@@ -1,0 +1,34 @@
+telegram:
+  api_id: 12345678
+  api_hash: "your_api_hash_here"
+  phone: "+1234567890"
+  channel_id: -1003488226342
+  session_file: "session/telegram.session"
+
+iqoption:
+  email: "your_email@example.com"
+  password: "your_password"
+  demo_mode: true
+  base_url: "https://iqoption.com/traderoom"
+  headless: true
+  cookies_file: "session/iqoption_cookies.json"
+
+trading:
+  default_amount: 10.0
+  max_concurrent_trades: 3
+  min_balance: 100.0
+  trade_delay_ms: 2000
+  max_daily_loss: 50.0
+
+risk:
+  enabled: true
+  max_trades_per_hour: 10
+  min_signal_confidence: 0.7
+
+logging:
+  level: "info"
+  file: "logs/bot.log"
+  console: true
+
+database:
+  path: "data/trades.db"
