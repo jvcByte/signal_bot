@@ -36,16 +36,20 @@ type IQOptionConfig struct {
 
 type CoordinatesConfig struct {
 	// Canvas UI coordinates (calibrate based on your screen resolution)
-	AssetX  int `yaml:"asset_x"`   // X coordinate for asset selector
-	AssetY  int `yaml:"asset_y"`   // Y coordinate for asset selector
-	ExpiryX int `yaml:"expiry_x"`  // X coordinate for expiry selector
-	ExpiryY int `yaml:"expiry_y"`  // Y coordinate for expiry selector
-	AmountX int `yaml:"amount_x"`  // X coordinate for amount input
-	AmountY int `yaml:"amount_y"`  // Y coordinate for amount input
-	CallX   int `yaml:"call_x"`    // X coordinate for CALL/BUY button
-	CallY   int `yaml:"call_y"`    // Y coordinate for CALL/BUY button
-	PutX    int `yaml:"put_x"`     // X coordinate for PUT/SELL button
-	PutY    int `yaml:"put_y"`     // Y coordinate for PUT/SELL button
+	AssetX        int `yaml:"asset_x"`         // Click to open asset dropdown
+	AssetY        int `yaml:"asset_y"`
+	AssetSelectX  int `yaml:"asset_select_x"`  // Click asset in the dropdown list
+	AssetSelectY  int `yaml:"asset_select_y"`
+	ExpiryX       int `yaml:"expiry_x"`        // Click to open expiry dropdown
+	ExpiryY       int `yaml:"expiry_y"`
+	ExpirySelectX int `yaml:"expiry_select_x"` // Click the actual expiry option
+	ExpirySelectY int `yaml:"expiry_select_y"`
+	AmountX       int `yaml:"amount_x"`        // Click amount field
+	AmountY       int `yaml:"amount_y"`
+	CallX         int `yaml:"call_x"`          // Green CALL/BUY button
+	CallY         int `yaml:"call_y"`
+	PutX          int `yaml:"put_x"`           // Red PUT/SELL button
+	PutY          int `yaml:"put_y"`
 }
 
 type TradingConfig struct {

@@ -339,171 +339,153 @@ func (t *Trader) isLoggedIn() bool {
 }
 
 func (t *Trader) selectAsset(asset string) error {
-	t.logger.Debug().Str("asset", asset).Msg("selecting asset via canvas coordinates...")
-	
-	// IQ Option uses a canvas-based UI, so we need to use coordinates
-	// Asset selector is typically in the top-left area
-	// These coordinates work for 1280x800 resolution (default)
-	// User needs to calibrate these based on their screen
-	
+	t.logger.Info().Str("asset", asset).Msg("🔍 Selecting asset...")
+
 	assetX := t.cfg.Coordinates.AssetX
 	assetY := t.cfg.Coordinates.AssetY
-	
+	selectX := t.cfg.Coordinates.AssetSelectX
+	selectY := t.cfg.Coordinates.AssetSelectY
+
 	if assetX == 0 || assetY == 0 {
-		return fmt.Errorf("asset coordinates not configured in config.yaml - please set coordinates.asset_x and coordinates.asset_y")
+		return fmt.Errorf("asset coordinates not configured - set coordinates.asset_x/asset_y in config.yaml")
 	}
-	
-	t.logger.Info().Int("x", assetX).Int("y", assetY).Msg("📍 Moving mouse to asset selector...")
-	
-	// Move mouse to asset selector
-	err := t.page.Mouse.MoveTo(proto.Point{X: float64(assetX), Y: float64(assetY)})
-	if err != nil {
-		return fmt.Errorf("move mouse to asset selector: %w", err)
+
+	// Step 1: Click to open the asset dropdown
+	t.logger.Info().Int("x", assetX).Int("y", assetY).Msg("📍 Step 1/2: Opening asset dropdown...")
+	if err := t.page.Mouse.MoveTo(proto.Point{X: float64(assetX), Y: float64(assetY)}); err != nil {
+		return fmt.Errorf("move to asset selector: %w", err)
 	}
-	
-	time.Sleep(500 * time.Millisecond) // Longer wait so user can see mouse position
-	
-	t.logger.Info().Msg("🖱️  Clicking asset selector...")
-	// Click to open asset selector
-	err = t.page.Mouse.Click(proto.InputMouseButtonLeft, 1)
-	if err != nil {
+	time.Sleep(400 * time.Millisecond)
+	if err := t.page.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
 		return fmt.Errorf("click asset selector: %w", err)
 	}
-	
-	time.Sleep(1500 * time.Millisecond) // Wait longer for UI to respond
-	t.logger.Info().Msg("⏸️  CHECK: Did the asset selector dropdown open? (You have 3 seconds to observe)")
-	time.Sleep(1500 * time.Millisecond)
-	
-	// Type asset name in search (keyboard input works even on canvas)
-	t.logger.Info().Str("asset", asset).Msg("⌨️  Typing asset name...")
-	for _, char := range asset {
-		err = t.page.Keyboard.Type(input.Key(char))
-		if err != nil {
-			return fmt.Errorf("type asset char: %w", err)
+
+	time.Sleep(1500 * time.Millisecond) // Wait for dropdown to open
+	t.logger.Info().Msg("⏸️  CHECK: Is the asset dropdown open now?")
+	time.Sleep(500 * time.Millisecond)
+
+	// Step 2: Click the specific asset in the dropdown list
+	if selectX > 0 && selectY > 0 {
+		t.logger.Info().Int("x", selectX).Int("y", selectY).Msg("📍 Step 2/2: Clicking asset in dropdown...")
+		if err := t.page.Mouse.MoveTo(proto.Point{X: float64(selectX), Y: float64(selectY)}); err != nil {
+			return fmt.Errorf("move to asset in list: %w", err)
 		}
-		time.Sleep(100 * time.Millisecond) // Slower typing so user can see
+		time.Sleep(400 * time.Millisecond)
+		if err := t.page.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
+			return fmt.Errorf("click asset in list: %w", err)
+		}
+		t.logger.Info().Str("asset", asset).Msg("⏸️  CHECK: Was the asset selected?")
+		time.Sleep(1500 * time.Millisecond)
+	} else {
+		// Fallback: type asset name and press Enter
+		t.logger.Info().Str("asset", asset).Msg("⌨️  Step 2/2: Typing asset name and pressing Enter...")
+		for _, char := range asset {
+			if err := t.page.Keyboard.Type(input.Key(char)); err != nil {
+				return fmt.Errorf("type asset char: %w", err)
+			}
+			time.Sleep(80 * time.Millisecond)
+		}
+		time.Sleep(600 * time.Millisecond)
+		if err := t.page.Keyboard.Press(input.Enter); err != nil {
+			return fmt.Errorf("press Enter: %w", err)
+		}
+		time.Sleep(1500 * time.Millisecond)
 	}
-	
-	time.Sleep(800 * time.Millisecond)
-	t.logger.Info().Msg("⏸️  CHECK: Did the asset name get typed in search box?")
-	time.Sleep(1000 * time.Millisecond)
-	
-	// Press Enter to select first result
-	t.logger.Info().Msg("↵  Pressing Enter to select asset...")
-	err = t.page.Keyboard.Press(input.Enter)
-	if err != nil {
-		return fmt.Errorf("press Enter: %w", err)
-	}
-	
-	t.logger.Info().Str("asset", asset).Msg("⏸️  CHECK: Did the asset get selected? Waiting 2 seconds...")
-	time.Sleep(2 * time.Second)
-	
+
 	return nil
 }
 
 func (t *Trader) setExpiry(minutes int) error {
 	t.logger.Info().Int("minutes", minutes).Msg("⏱️  Setting expiry time...")
-	
+
 	expiryX := t.cfg.Coordinates.ExpiryX
 	expiryY := t.cfg.Coordinates.ExpiryY
-	
+	selectX := t.cfg.Coordinates.ExpirySelectX
+	selectY := t.cfg.Coordinates.ExpirySelectY
+
 	if expiryX == 0 || expiryY == 0 {
-		return fmt.Errorf("expiry coordinates not configured in config.yaml - please set coordinates.expiry_x and coordinates.expiry_y")
+		return fmt.Errorf("expiry coordinates not configured - set coordinates.expiry_x/expiry_y in config.yaml")
 	}
-	
-	t.logger.Info().Int("x", expiryX).Int("y", expiryY).Msg("📍 Moving mouse to expiry selector...")
-	
-	// Move mouse to expiry selector
-	err := t.page.Mouse.MoveTo(proto.Point{X: float64(expiryX), Y: float64(expiryY)})
-	if err != nil {
-		return fmt.Errorf("move mouse to expiry selector: %w", err)
+
+	// Step 1: Click to open expiry dropdown
+	t.logger.Info().Int("x", expiryX).Int("y", expiryY).Msg("📍 Step 1/2: Opening expiry dropdown...")
+	if err := t.page.Mouse.MoveTo(proto.Point{X: float64(expiryX), Y: float64(expiryY)}); err != nil {
+		return fmt.Errorf("move to expiry selector: %w", err)
 	}
-	
-	time.Sleep(500 * time.Millisecond)
-	
-	t.logger.Info().Msg("🖱️  Clicking expiry selector...")
-	// Click to open expiry dropdown
-	err = t.page.Mouse.Click(proto.InputMouseButtonLeft, 1)
-	if err != nil {
+	time.Sleep(400 * time.Millisecond)
+	if err := t.page.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
 		return fmt.Errorf("click expiry selector: %w", err)
 	}
-	
-	time.Sleep(800 * time.Millisecond)
-	t.logger.Info().Int("minutes", minutes).Msg("⏸️  CHECK: Did expiry dropdown open? Using current/default selection...")
-	time.Sleep(1000 * time.Millisecond)
-	
-	// Press Escape to close dropdown (or Enter if selection needed)
-	t.logger.Info().Msg("⎋  Pressing Escape to close dropdown...")
-	err = t.page.Keyboard.Press(input.Escape)
-	if err != nil {
-		return fmt.Errorf("close expiry dropdown: %w", err)
-	}
-	
+
+	time.Sleep(1200 * time.Millisecond)
+	t.logger.Info().Msg("⏸️  CHECK: Is the expiry dropdown open?")
 	time.Sleep(500 * time.Millisecond)
-	
+
+	// Step 2: Click the actual expiry option in the dropdown
+	if selectX > 0 && selectY > 0 {
+		t.logger.Info().Int("x", selectX).Int("y", selectY).Msg("📍 Step 2/2: Clicking expiry option...")
+		if err := t.page.Mouse.MoveTo(proto.Point{X: float64(selectX), Y: float64(selectY)}); err != nil {
+			return fmt.Errorf("move to expiry option: %w", err)
+		}
+		time.Sleep(400 * time.Millisecond)
+		if err := t.page.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
+			return fmt.Errorf("click expiry option: %w", err)
+		}
+		t.logger.Info().Int("minutes", minutes).Msg("⏸️  CHECK: Was the expiry time selected?")
+		time.Sleep(1000 * time.Millisecond)
+	} else {
+		t.logger.Info().Msg("⎋  Closing expiry dropdown (using current selection)...")
+		if err := t.page.Keyboard.Press(input.Escape); err != nil {
+			return fmt.Errorf("close expiry dropdown: %w", err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
 	return nil
 }
 
 func (t *Trader) setAmount(amount float64) error {
 	t.logger.Info().Float64("amount", amount).Msg("💰 Setting trade amount...")
-	
+
 	amountX := t.cfg.Coordinates.AmountX
 	amountY := t.cfg.Coordinates.AmountY
-	
+
 	if amountX == 0 || amountY == 0 {
-		return fmt.Errorf("amount coordinates not configured in config.yaml - please set coordinates.amount_x and coordinates.amount_y")
+		return fmt.Errorf("amount coordinates not configured - set coordinates.amount_x/amount_y in config.yaml")
 	}
-	
-	t.logger.Info().Int("x", amountX).Int("y", amountY).Msg("📍 Moving mouse to amount field...")
-	
-	// Move mouse to amount field
-	err := t.page.Mouse.MoveTo(proto.Point{X: float64(amountX), Y: float64(amountY)})
-	if err != nil {
-		return fmt.Errorf("move mouse to amount field: %w", err)
+
+	t.logger.Info().Int("x", amountX).Int("y", amountY).Msg("📍 Clicking amount field...")
+	if err := t.page.Mouse.MoveTo(proto.Point{X: float64(amountX), Y: float64(amountY)}); err != nil {
+		return fmt.Errorf("move to amount field: %w", err)
 	}
-	
-	time.Sleep(500 * time.Millisecond)
-	
-	t.logger.Info().Msg("🖱️  Clicking amount field...")
-	// Click amount field
-	err = t.page.Mouse.Click(proto.InputMouseButtonLeft, 1)
-	if err != nil {
-		return fmt.Errorf("click amount field: %w", err)
+	time.Sleep(400 * time.Millisecond)
+
+	// Triple-click to select all existing text
+	if err := t.page.Mouse.Click(proto.InputMouseButtonLeft, 3); err != nil {
+		return fmt.Errorf("triple-click amount field: %w", err)
 	}
-	
-	time.Sleep(500 * time.Millisecond)
-	t.logger.Info().Msg("⏸️  CHECK: Did amount field get focused?")
-	time.Sleep(800 * time.Millisecond)
-	
-	// Select all existing text (Ctrl+A)
-	t.logger.Info().Msg("⌨️  Selecting all text (Ctrl+A)...")
-	err = t.page.Keyboard.Press(input.ControlLeft)
-	if err != nil {
-		return fmt.Errorf("press Ctrl: %w", err)
+	time.Sleep(400 * time.Millisecond)
+
+	// Also Ctrl+A as fallback
+	if err := t.page.Keyboard.Press(input.ControlLeft); err == nil {
+		t.page.Keyboard.Press(input.KeyA)
 	}
-	time.Sleep(50 * time.Millisecond)
-	err = t.page.Keyboard.Press(input.KeyA)
-	if err != nil {
-		return fmt.Errorf("press A: %w", err)
-	}
-	
-	time.Sleep(300 * time.Millisecond)
-	
-	// Type new amount
-	amountStr := fmt.Sprintf("%.0f", amount) // IQ Option usually doesn't need decimals
+	time.Sleep(200 * time.Millisecond)
+
+	// Type the new amount
+	amountStr := fmt.Sprintf("%.0f", amount)
 	t.logger.Info().Str("amount", amountStr).Msg("⌨️  Typing amount...")
 	for _, char := range amountStr {
-		err = t.page.Keyboard.Type(input.Key(char))
-		if err != nil {
-			return fmt.Errorf("type amount char: %w", err)
+		if err := t.page.Keyboard.Type(input.Key(char)); err != nil {
+			return fmt.Errorf("type amount: %w", err)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(80 * time.Millisecond)
 	}
-	
-	time.Sleep(500 * time.Millisecond)
-	t.logger.Info().Str("amount", amountStr).Msg("⏸️  CHECK: Did amount get entered correctly?")
-	time.Sleep(1000 * time.Millisecond)
-	
+
+	time.Sleep(600 * time.Millisecond)
+	t.logger.Info().Str("amount", amountStr).Msg("⏸️  CHECK: Is the amount correct?")
+	time.Sleep(800 * time.Millisecond)
+
 	return nil
 }
 
