@@ -19,17 +19,19 @@ import (
 )
 
 type Trader struct {
-	cfg     *config.IQOptionConfig
-	browser *rod.Browser
-	page    *rod.Page
-	logger  zerolog.Logger
-	loggedIn bool
+	cfg        *config.IQOptionConfig
+	browser    *rod.Browser
+	page       *rod.Page
+	logger     zerolog.Logger
+	loggedIn   bool
+	firstTrade bool // first trade uses different UI coordinates
 }
 
 func New(cfg *config.IQOptionConfig, logger zerolog.Logger) *Trader {
 	return &Trader{
-		cfg:    cfg,
-		logger: logger,
+		cfg:        cfg,
+		logger:     logger,
+		firstTrade: true,
 	}
 }
 
@@ -343,8 +345,6 @@ func (t *Trader) selectAsset(asset string) error {
 
 	assetX := t.cfg.Coordinates.AssetX
 	assetY := t.cfg.Coordinates.AssetY
-	selectX := t.cfg.Coordinates.AssetSelectX
-	selectY := t.cfg.Coordinates.AssetSelectY
 
 	if assetX == 0 || assetY == 0 {
 		return fmt.Errorf("asset coordinates not configured - set coordinates.asset_x/asset_y in config.yaml")
@@ -376,32 +376,32 @@ func (t *Trader) selectAsset(asset string) error {
 	time.Sleep(800 * time.Millisecond)
 
 	// Step 3: Click the asset in the results list
-	// Click both known positions - UI shifts after first trade
-	if selectX > 0 && selectY > 0 {
-		t.logger.Info().Int("x", selectX).Int("y", selectY).Msg("📍 Step 3/3: Clicking asset in results list (primary position)...")
-		if err := t.page.Mouse.MoveTo(proto.Point{X: float64(selectX), Y: float64(selectY)}); err != nil {
+	// Use different coordinates for first vs subsequent trades (UI shifts after first trade)
+	var clickX, clickY int
+	if t.firstTrade {
+		clickX = t.cfg.Coordinates.AssetSelectX
+		clickY = t.cfg.Coordinates.AssetSelectY
+		t.logger.Info().Int("x", clickX).Int("y", clickY).Msg("📍 Step 3/3: Clicking asset (first trade position)...")
+	} else {
+		clickX = t.cfg.Coordinates.AssetSelectX2
+		clickY = t.cfg.Coordinates.AssetSelectY2
+		if clickX == 0 || clickY == 0 {
+			// Fall back to primary if secondary not set
+			clickX = t.cfg.Coordinates.AssetSelectX
+			clickY = t.cfg.Coordinates.AssetSelectY
+		}
+		t.logger.Info().Int("x", clickX).Int("y", clickY).Msg("📍 Step 3/3: Clicking asset (subsequent trade position)...")
+	}
+
+	if clickX > 0 && clickY > 0 {
+		if err := t.page.Mouse.MoveTo(proto.Point{X: float64(clickX), Y: float64(clickY)}); err != nil {
 			return fmt.Errorf("move to asset in list: %w", err)
 		}
 		time.Sleep(400 * time.Millisecond)
 		if err := t.page.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
 			return fmt.Errorf("click asset in list: %w", err)
 		}
-		time.Sleep(600 * time.Millisecond)
-
-		// Also click the secondary position (UI shifts after first trade)
-		// One of these two clicks will always land correctly
-		t.logger.Info().Msg("📍 Also clicking secondary position (post-first-trade UI)...")
-		secondaryX := t.cfg.Coordinates.AssetSelectX2
-		secondaryY := t.cfg.Coordinates.AssetSelectY2
-		if secondaryX > 0 && secondaryY > 0 {
-			if err := t.page.Mouse.MoveTo(proto.Point{X: float64(secondaryX), Y: float64(secondaryY)}); err == nil {
-				time.Sleep(300 * time.Millisecond)
-				t.page.Mouse.Click(proto.InputMouseButtonLeft, 1)
-				time.Sleep(400 * time.Millisecond)
-			}
-		}
 	} else {
-		// Fallback: just press Enter to pick first result
 		t.logger.Info().Msg("↵  Step 3/3: Pressing Enter to select first result...")
 		if err := t.page.Keyboard.Press(input.Enter); err != nil {
 			return fmt.Errorf("press Enter: %w", err)
@@ -648,6 +648,7 @@ func (t *Trader) PlaceTrade(ctx context.Context, signal *models.Signal, amount f
 		return trade, fmt.Errorf("select asset: %w", err)
 	}
 	t.logger.Info().Msg("✓ asset selected")
+	t.firstTrade = false // subsequent trades use different UI coordinates
 	
 	// Step 2: Set expiry time
 	t.logger.Info().Int("minutes", signal.Expiry).Msg("→ Step 2/4: Setting expiry time...")
