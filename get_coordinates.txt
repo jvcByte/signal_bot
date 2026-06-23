@@ -80,9 +80,22 @@ bundle.js?v=1781005889:717    ✅ Copy to config: undefined_x: 1228
 
 
 6. Selected Asset:
-bundle.js?v=1781005889:717    X: 517
-bundle.js?v=1781005889:717    Y: 237
+bundle.js?v=1781005889:717    X: 529  
+bundle.js?v=1781005889:717    Y: 243  
 bundle.js?v=1781005889:717    ✅ Copy to config: expiry_selector_x: 433
 bundle.js?v=1781005889:717                       expiry_selector_y: 227
+
+
+For the very first trade, the ui is different:
+
+this works:
+asset_select_x: 502
+asset_select_y: 252
+
+
+but does not work for subsequent trades cause of ui changes, but this works for subsequent trades:
+
+asset_select_x: 529
+asset_select_y: 243
 
 

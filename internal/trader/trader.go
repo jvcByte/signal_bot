@@ -376,14 +376,29 @@ func (t *Trader) selectAsset(asset string) error {
 	time.Sleep(800 * time.Millisecond)
 
 	// Step 3: Click the asset in the results list
+	// Click both known positions - UI shifts after first trade
 	if selectX > 0 && selectY > 0 {
-		t.logger.Info().Int("x", selectX).Int("y", selectY).Msg("📍 Step 3/3: Clicking asset in results list...")
+		t.logger.Info().Int("x", selectX).Int("y", selectY).Msg("📍 Step 3/3: Clicking asset in results list (primary position)...")
 		if err := t.page.Mouse.MoveTo(proto.Point{X: float64(selectX), Y: float64(selectY)}); err != nil {
 			return fmt.Errorf("move to asset in list: %w", err)
 		}
 		time.Sleep(400 * time.Millisecond)
 		if err := t.page.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
 			return fmt.Errorf("click asset in list: %w", err)
+		}
+		time.Sleep(600 * time.Millisecond)
+
+		// Also click the secondary position (UI shifts after first trade)
+		// One of these two clicks will always land correctly
+		t.logger.Info().Msg("📍 Also clicking secondary position (post-first-trade UI)...")
+		secondaryX := t.cfg.Coordinates.AssetSelectX2
+		secondaryY := t.cfg.Coordinates.AssetSelectY2
+		if secondaryX > 0 && secondaryY > 0 {
+			if err := t.page.Mouse.MoveTo(proto.Point{X: float64(secondaryX), Y: float64(secondaryY)}); err == nil {
+				time.Sleep(300 * time.Millisecond)
+				t.page.Mouse.Click(proto.InputMouseButtonLeft, 1)
+				time.Sleep(400 * time.Millisecond)
+			}
 		}
 	} else {
 		// Fallback: just press Enter to pick first result
