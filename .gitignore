@@ -1,0 +1,46 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+signal-bot
+bin/
+
+# Test binary
+*.test
+*.out
+
+# Dependencies
+vendor/
+
+# Config with secrets
+configs/config.yaml
+configs/*.yaml
+!configs/config.example.yaml
+
+# Session data
+*.session
+session/
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Others
+iqoption.com
