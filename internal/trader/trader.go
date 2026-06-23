@@ -461,52 +461,39 @@ func (t *Trader) setAmount(amount float64) error {
 
 	amountStr := fmt.Sprintf("%.0f", amount)
 
+	// Click the amount field to focus it
 	t.logger.Info().Int("x", amountX).Int("y", amountY).Msg("📍 Clicking amount field...")
 	if err := t.page.Mouse.MoveTo(proto.Point{X: float64(amountX), Y: float64(amountY)}); err != nil {
 		return fmt.Errorf("move to amount field: %w", err)
 	}
 	time.Sleep(300 * time.Millisecond)
-
-	// Single click to focus
 	if err := t.page.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
 		return fmt.Errorf("click amount field: %w", err)
 	}
 	time.Sleep(400 * time.Millisecond)
 
-	// Select all with Ctrl+A then delete
-	t.logger.Info().Msg("⌨️  Clearing existing amount (Ctrl+A → Delete)...")
-	if err := t.page.Keyboard.Press(input.ControlLeft); err != nil {
-		return fmt.Errorf("press Ctrl: %w", err)
+	// Select all text and delete it using keyboard
+	// Press End first to go to end of field, then Shift+Home to select all, then Delete
+	t.logger.Info().Msg("⌨️  Selecting all and clearing...")
+	t.page.Keyboard.Press(input.End)
+	time.Sleep(80 * time.Millisecond)
+
+	// Hold Shift and press Home to select everything
+	if err := t.page.Keyboard.Press(input.ShiftLeft); err == nil {
+		time.Sleep(50 * time.Millisecond)
+		t.page.Keyboard.Press(input.Home)
+		time.Sleep(80 * time.Millisecond)
+		t.page.Keyboard.Release(input.ShiftLeft)
+		time.Sleep(80 * time.Millisecond)
 	}
-	time.Sleep(50 * time.Millisecond)
-	if err := t.page.Keyboard.Type(input.KeyA); err != nil {
-		t.page.Keyboard.Release(input.ControlLeft)
-		return fmt.Errorf("press A: %w", err)
-	}
-	time.Sleep(50 * time.Millisecond)
-	if err := t.page.Keyboard.Release(input.ControlLeft); err != nil {
-		return fmt.Errorf("release Ctrl: %w", err)
-	}
-	time.Sleep(200 * time.Millisecond)
 
 	// Delete selected text
-	if err := t.page.Keyboard.Press(input.Backspace); err != nil {
-		return fmt.Errorf("backspace: %w", err)
-	}
-	time.Sleep(200 * time.Millisecond)
+	t.page.Keyboard.Press(input.Delete)
+	time.Sleep(100 * time.Millisecond)
+	t.page.Keyboard.Press(input.Backspace)
+	time.Sleep(100 * time.Millisecond)
 
-	// Extra: Home → Shift+End → Backspace to catch anything remaining
-	t.page.Keyboard.Press(input.Home)
-	time.Sleep(80 * time.Millisecond)
-	if err := t.page.Keyboard.Press(input.ShiftLeft); err == nil {
-		t.page.Keyboard.Press(input.End)
-		t.page.Keyboard.Release(input.ShiftLeft)
-		time.Sleep(100 * time.Millisecond)
-		t.page.Keyboard.Press(input.Backspace)
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	// Type the new amount
+	// Type each digit of the new amount
 	t.logger.Info().Str("amount", amountStr).Msg("⌨️  Typing new amount...")
 	for _, char := range amountStr {
 		if err := t.page.Keyboard.Type(input.Key(char)); err != nil {

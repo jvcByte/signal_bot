@@ -162,15 +162,16 @@ func (c *Client) pollMessages(ctx context.Context) error {
 	// Track the last message ID we've seen
 	lastMessageID := 0
 	pollInterval := 2 * time.Second // Poll every 2 seconds
-	
+	firstPoll := true // flag to skip processing on first poll
+
 	c.logger.Info().
 		Int64("channel_id", channelID).
 		Dur("poll_interval", pollInterval).
 		Msg("✓ starting message polling loop")
-	
+
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -185,12 +186,12 @@ func (c *Client) pollMessages(ctx context.Context) error {
 				},
 				Limit: 10, // Check last 10 messages
 			})
-			
+
 			if err != nil {
 				c.logger.Debug().Err(err).Msg("poll error (will retry)")
 				continue
 			}
-			
+
 			// Extract messages
 			var messages []*tg.Message
 			switch h := history.(type) {
@@ -201,8 +202,21 @@ func (c *Client) pollMessages(ctx context.Context) error {
 					}
 				}
 			}
-			
-			// Process new messages (ones with ID > lastMessageID)
+
+			if firstPoll {
+				// On first poll: just record the latest message ID, don't process anything
+				for _, msg := range messages {
+					if msg.ID > lastMessageID {
+						lastMessageID = msg.ID
+					}
+				}
+				firstPoll = false
+				c.logger.Info().Int("last_msg_id", lastMessageID).Msg("✅ bot ready - watching for NEW messages only (existing messages ignored)")
+				c.logger.Info().Msg("📨 Send a NEW message to the channel to trigger a trade")
+				continue
+			}
+
+			// Process only messages newer than what we've seen
 			newMessages := 0
 			for _, msg := range messages {
 				if msg.ID > lastMessageID {
@@ -215,30 +229,17 @@ func (c *Client) pollMessages(ctx context.Context) error {
 						Int("msg_id", msg.ID).
 						Str("preview", preview).
 						Msg("📨 NEW MESSAGE DETECTED")
-					
-					// Update last seen ID
+
 					if msg.ID > lastMessageID {
 						lastMessageID = msg.ID
 					}
-					
-					// Handle the message
+
 					if err := c.handler(ctx, msg.Message); err != nil {
 						c.logger.Error().Err(err).Msg("failed to handle message")
 					}
 				}
 			}
-			
-			// Initialize lastMessageID on first poll
-			if lastMessageID == 0 && len(messages) > 0 {
-				// Find the highest message ID
-				for _, msg := range messages {
-					if msg.ID > lastMessageID {
-						lastMessageID = msg.ID
-					}
-				}
-				c.logger.Info().Int("last_msg_id", lastMessageID).Msg("initialized with latest message ID - ready for new messages")
-			}
-			
+
 			if newMessages > 0 {
 				c.logger.Debug().Int("new_messages", newMessages).Msg("processed new messages")
 			}
