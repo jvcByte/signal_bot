@@ -351,7 +351,7 @@ func (t *Trader) selectAsset(asset string) error {
 	}
 
 	// Step 1: Click to open the asset dropdown
-	t.logger.Info().Int("x", assetX).Int("y", assetY).Msg("📍 Step 1/2: Opening asset dropdown...")
+	t.logger.Info().Int("x", assetX).Int("y", assetY).Msg("📍 Step 1/3: Opening asset dropdown...")
 	if err := t.page.Mouse.MoveTo(proto.Point{X: float64(assetX), Y: float64(assetY)}); err != nil {
 		return fmt.Errorf("move to asset selector: %w", err)
 	}
@@ -359,14 +359,25 @@ func (t *Trader) selectAsset(asset string) error {
 	if err := t.page.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
 		return fmt.Errorf("click asset selector: %w", err)
 	}
-
-	time.Sleep(1500 * time.Millisecond) // Wait for dropdown to open
-	t.logger.Info().Msg("⏸️  CHECK: Is the asset dropdown open now?")
+	time.Sleep(1500 * time.Millisecond)
+	t.logger.Info().Msg("⏸️  CHECK: Is the asset dropdown/search open?")
 	time.Sleep(500 * time.Millisecond)
 
-	// Step 2: Click the specific asset in the dropdown list
+	// Step 2: Type asset name to filter results
+	t.logger.Info().Str("asset", asset).Msg("⌨️  Step 2/3: Typing asset name to filter...")
+	for _, char := range asset {
+		if err := t.page.Keyboard.Type(input.Key(char)); err != nil {
+			return fmt.Errorf("type asset char: %w", err)
+		}
+		time.Sleep(80 * time.Millisecond)
+	}
+	time.Sleep(800 * time.Millisecond)
+	t.logger.Info().Str("asset", asset).Msg("⏸️  CHECK: Did the asset appear in search results?")
+	time.Sleep(800 * time.Millisecond)
+
+	// Step 3: Click the asset in the results list
 	if selectX > 0 && selectY > 0 {
-		t.logger.Info().Int("x", selectX).Int("y", selectY).Msg("📍 Step 2/2: Clicking asset in dropdown...")
+		t.logger.Info().Int("x", selectX).Int("y", selectY).Msg("📍 Step 3/3: Clicking asset in results list...")
 		if err := t.page.Mouse.MoveTo(proto.Point{X: float64(selectX), Y: float64(selectY)}); err != nil {
 			return fmt.Errorf("move to asset in list: %w", err)
 		}
@@ -374,23 +385,17 @@ func (t *Trader) selectAsset(asset string) error {
 		if err := t.page.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
 			return fmt.Errorf("click asset in list: %w", err)
 		}
-		t.logger.Info().Str("asset", asset).Msg("⏸️  CHECK: Was the asset selected?")
-		time.Sleep(1500 * time.Millisecond)
 	} else {
-		// Fallback: type asset name and press Enter
-		t.logger.Info().Str("asset", asset).Msg("⌨️  Step 2/2: Typing asset name and pressing Enter...")
-		for _, char := range asset {
-			if err := t.page.Keyboard.Type(input.Key(char)); err != nil {
-				return fmt.Errorf("type asset char: %w", err)
-			}
-			time.Sleep(80 * time.Millisecond)
-		}
-		time.Sleep(600 * time.Millisecond)
+		// Fallback: just press Enter to pick first result
+		t.logger.Info().Msg("↵  Step 3/3: Pressing Enter to select first result...")
 		if err := t.page.Keyboard.Press(input.Enter); err != nil {
 			return fmt.Errorf("press Enter: %w", err)
 		}
-		time.Sleep(1500 * time.Millisecond)
 	}
+
+	time.Sleep(1500 * time.Millisecond)
+	t.logger.Info().Str("asset", asset).Msg("⏸️  CHECK: Was the asset selected?")
+	time.Sleep(500 * time.Millisecond)
 
 	return nil
 }
