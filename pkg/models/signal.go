@@ -10,6 +10,7 @@ type Signal struct {
 	Amount      float64
 	Confidence  float64
 	Source      string
+	EntryWindow time.Time // when to place the trade (zero = immediately)
 	ReceivedAt  time.Time
 	ProcessedAt *time.Time
 	Raw         string

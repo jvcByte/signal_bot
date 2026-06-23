@@ -117,6 +117,13 @@ func (b *Bot) handleMessage(ctx context.Context, message string) error {
 		Int("expiry_minutes", signal.Expiry).
 		Float64("confidence_pct", signal.Confidence*100).
 		Msg("📊 SIGNAL DETAILS")
+	if !signal.EntryWindow.IsZero() {
+		waitDuration := time.Until(signal.EntryWindow).Round(time.Second)
+		b.logger.Info().
+			Str("entry_window", signal.EntryWindow.Format("15:04:05")).
+			Dur("wait_for", waitDuration).
+			Msg("🕐 Trade will execute at entry window")
+	}
 	b.logger.Info().Str("raw_signal", signal.Raw).Msg("📝 raw signal text")
 	b.logger.Info().Msg("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
@@ -260,6 +267,42 @@ func (b *Bot) tradeWorker(ctx context.Context, workerID int) {
 					Msg("⛔ balance too low, skipping trade")
 				continue
 			}
+		}
+
+		// Wait for entry window if specified
+		if !signal.EntryWindow.IsZero() {
+			now := time.Now()
+			waitDuration := time.Until(signal.EntryWindow)
+
+			if waitDuration > 2*time.Minute {
+				// Entry window too far in the future or already passed
+				b.logger.Warn().
+					Int("worker_id", workerID).
+					Str("entry_window", signal.EntryWindow.Format("15:04:05")).
+					Dur("wait", waitDuration).
+					Msg("⛔ Entry window too far away or expired, skipping signal")
+				continue
+			}
+
+			if waitDuration > 0 {
+				b.logger.Info().
+					Int("worker_id", workerID).
+					Str("entry_window", signal.EntryWindow.Format("15:04:05")).
+					Str("current_time", now.Format("15:04:05")).
+					Dur("waiting", waitDuration.Round(time.Second)).
+					Msg("⏰ Waiting for entry window...")
+
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(waitDuration):
+				}
+			}
+
+			b.logger.Info().
+				Int("worker_id", workerID).
+				Str("entry_window", signal.EntryWindow.Format("15:04:05")).
+				Msg("✅ Entry window reached - executing trade NOW")
 		}
 
 		// Add delay between trades
