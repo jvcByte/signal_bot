@@ -459,27 +459,55 @@ func (t *Trader) setAmount(amount float64) error {
 		return fmt.Errorf("amount coordinates not configured - set coordinates.amount_x/amount_y in config.yaml")
 	}
 
+	amountStr := fmt.Sprintf("%.0f", amount)
+
 	t.logger.Info().Int("x", amountX).Int("y", amountY).Msg("📍 Clicking amount field...")
 	if err := t.page.Mouse.MoveTo(proto.Point{X: float64(amountX), Y: float64(amountY)}); err != nil {
 		return fmt.Errorf("move to amount field: %w", err)
 	}
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
-	// Triple-click to select all existing text
-	if err := t.page.Mouse.Click(proto.InputMouseButtonLeft, 3); err != nil {
-		return fmt.Errorf("triple-click amount field: %w", err)
+	// Single click to focus
+	if err := t.page.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return fmt.Errorf("click amount field: %w", err)
 	}
 	time.Sleep(400 * time.Millisecond)
 
-	// Also Ctrl+A as fallback
-	if err := t.page.Keyboard.Press(input.ControlLeft); err == nil {
-		t.page.Keyboard.Press(input.KeyA)
+	// Select all with Ctrl+A then delete
+	t.logger.Info().Msg("⌨️  Clearing existing amount (Ctrl+A → Delete)...")
+	if err := t.page.Keyboard.Press(input.ControlLeft); err != nil {
+		return fmt.Errorf("press Ctrl: %w", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := t.page.Keyboard.Type(input.KeyA); err != nil {
+		t.page.Keyboard.Release(input.ControlLeft)
+		return fmt.Errorf("press A: %w", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := t.page.Keyboard.Release(input.ControlLeft); err != nil {
+		return fmt.Errorf("release Ctrl: %w", err)
 	}
 	time.Sleep(200 * time.Millisecond)
 
+	// Delete selected text
+	if err := t.page.Keyboard.Press(input.Backspace); err != nil {
+		return fmt.Errorf("backspace: %w", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	// Extra: Home → Shift+End → Backspace to catch anything remaining
+	t.page.Keyboard.Press(input.Home)
+	time.Sleep(80 * time.Millisecond)
+	if err := t.page.Keyboard.Press(input.ShiftLeft); err == nil {
+		t.page.Keyboard.Press(input.End)
+		t.page.Keyboard.Release(input.ShiftLeft)
+		time.Sleep(100 * time.Millisecond)
+		t.page.Keyboard.Press(input.Backspace)
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	// Type the new amount
-	amountStr := fmt.Sprintf("%.0f", amount)
-	t.logger.Info().Str("amount", amountStr).Msg("⌨️  Typing amount...")
+	t.logger.Info().Str("amount", amountStr).Msg("⌨️  Typing new amount...")
 	for _, char := range amountStr {
 		if err := t.page.Keyboard.Type(input.Key(char)); err != nil {
 			return fmt.Errorf("type amount: %w", err)
@@ -488,7 +516,7 @@ func (t *Trader) setAmount(amount float64) error {
 	}
 
 	time.Sleep(600 * time.Millisecond)
-	t.logger.Info().Str("amount", amountStr).Msg("⏸️  CHECK: Is the amount correct?")
+	t.logger.Info().Str("amount", amountStr).Msg("⏸️  CHECK: Is the amount showing correctly?")
 	time.Sleep(800 * time.Millisecond)
 
 	return nil
