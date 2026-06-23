@@ -472,26 +472,18 @@ func (t *Trader) setAmount(amount float64) error {
 	}
 	time.Sleep(400 * time.Millisecond)
 
-	// Select all text and delete it using keyboard
-	// Press End first to go to end of field, then Shift+Home to select all, then Delete
-	t.logger.Info().Msg("⌨️  Selecting all and clearing...")
-	t.page.Keyboard.Press(input.End)
-	time.Sleep(80 * time.Millisecond)
-
-	// Hold Shift and press Home to select everything
-	if err := t.page.Keyboard.Press(input.ShiftLeft); err == nil {
-		time.Sleep(50 * time.Millisecond)
-		t.page.Keyboard.Press(input.Home)
-		time.Sleep(80 * time.Millisecond)
-		t.page.Keyboard.Release(input.ShiftLeft)
-		time.Sleep(80 * time.Millisecond)
+	// Spam Backspace 20 times to wipe any existing value regardless of length
+	t.logger.Info().Msg("⌨️  Clearing field (20x Backspace)...")
+	for i := 0; i < 20; i++ {
+		t.page.Keyboard.Press(input.Backspace)
+		time.Sleep(30 * time.Millisecond)
 	}
-
-	// Delete selected text
-	t.page.Keyboard.Press(input.Delete)
-	time.Sleep(100 * time.Millisecond)
-	t.page.Keyboard.Press(input.Backspace)
-	time.Sleep(100 * time.Millisecond)
+	// Also spam Delete in case cursor is at start
+	for i := 0; i < 20; i++ {
+		t.page.Keyboard.Press(input.Delete)
+		time.Sleep(30 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
 
 	// Type each digit of the new amount
 	t.logger.Info().Str("amount", amountStr).Msg("⌨️  Typing new amount...")
