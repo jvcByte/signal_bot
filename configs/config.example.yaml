@@ -10,8 +10,23 @@ iqoption:
   password: "your_password"
   demo_mode: true
   base_url: "https://iqoption.com/traderoom"
-  headless: true
+  headless: false  # Keep false to see the browser and calibrate coordinates
   cookies_file: "session/iqoption_cookies.json"
+  
+  # Canvas UI Coordinates (IQ Option uses canvas, not HTML elements)
+  # To calibrate: Run bot, take screenshot, use image editor to find pixel coordinates
+  # Default values for 1280x800 resolution - YOU MUST CALIBRATE THESE!
+  coordinates:
+    asset_x: 150    # Click here to open asset selector
+    asset_y: 50     # Then type asset name and press Enter
+    expiry_x: 300   # Click here to open expiry dropdown
+    expiry_y: 100   # (Or pre-select expiry manually before running bot)
+    amount_x: 640   # Click here to focus amount input field
+    amount_y: 400   # Then type amount value
+    call_x: 500     # Click here for CALL/BUY (green up button)
+    call_y: 650
+    put_x: 780      # Click here for PUT/SELL (red down button)
+    put_y: 650
 
 trading:
   default_amount: 10.0

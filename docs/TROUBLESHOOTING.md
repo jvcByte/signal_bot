@@ -204,22 +204,53 @@ iqoption:
 ERROR: failed to place trade: set amount: find amount input: element not found
 ```
 
-**Cause:** IQ Options UI changed, selectors outdated
+**Cause:** IQ Option uses **Canvas-based UI** (not HTML elements)
 
 **Solution:**
-1. Run with `headless: false`
-2. Open browser devtools (F12)
-3. Inspect the element
-4. Copy actual selector
-5. Update in `internal/trader/trader.go`:
+This is expected! IQ Option's traderoom is rendered on HTML Canvas, not with standard HTML buttons/inputs.
 
-```go
-// Old (broken)
-amountInput := page.Element(`input[class*="amount"]`)
+**You must use coordinate-based clicking:**
 
-// New (working)
-amountInput := page.Element(`input[data-test-id="trade-amount"]`)
+1. **Run calibration tool:**
+   ```bash
+   make calibrate
+   ```
+
+2. **Screenshot saved** to `calibration_screenshot.png`
+
+3. **Open in image editor** and hover over buttons to find coordinates
+
+4. **Update config.yaml** with actual coordinates:
+   ```yaml
+   iqoption:
+     coordinates:
+       asset_x: 150   # Your actual coordinates
+       asset_y: 50
+       call_x: 500
+       call_y: 650
+       put_x: 780
+       put_y: 650
+       # etc...
+   ```
+
+5. **See [Canvas UI Guide](CANVAS_UI.md) for detailed instructions**
+
+#### Error: "coordinates not configured"
 ```
+ERROR: CALL button coordinates not configured in config.yaml
+```
+
+**Cause:** Coordinates missing or set to 0
+
+**Solution:**
+All coordinate values must be set:
+- asset_x, asset_y
+- expiry_x, expiry_y
+- amount_x, amount_y
+- call_x, call_y
+- put_x, put_y
+
+Run `make calibrate` to find correct values.
 
 #### Issue: "Demo mode not switching"
 ```
@@ -307,6 +338,34 @@ WARN: balance too low balance=0
 2. Go to Practice Account
 3. Click "Replenish" or "Add Funds"
 4. Demo accounts usually auto-refill
+
+#### Issue: "Trades click wrong location"
+```
+INFO: clicking direction button
+INFO: trade executed!
+# But nothing happened in browser, or clicked wrong spot
+```
+
+**Cause:** Coordinates not calibrated for your screen resolution
+
+**Solution:**
+```bash
+# Recalibrate coordinates
+make calibrate
+
+# Take new screenshot
+# Measure exact pixel positions
+# Update config.yaml
+
+# Test with single trade
+# Adjust coordinates by 10-20 pixels if needed
+```
+
+**Tips:**
+- Default coordinates assume 1280x800 resolution
+- Different resolution = different coordinates
+- Keep browser window at consistent size
+- Round to nearest 5-10 pixels for margin
 
 #### Issue: "Asset not found"
 ```

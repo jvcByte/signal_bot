@@ -25,12 +25,27 @@ type TelegramConfig struct {
 }
 
 type IQOptionConfig struct {
-	Email       string `yaml:"email"`
-	Password    string `yaml:"password"`
-	DemoMode    bool   `yaml:"demo_mode"`
-	BaseURL     string `yaml:"base_url"`
-	Headless    bool   `yaml:"headless"`
-	CookiesFile string `yaml:"cookies_file"`
+	Email       string            `yaml:"email"`
+	Password    string            `yaml:"password"`
+	DemoMode    bool              `yaml:"demo_mode"`
+	BaseURL     string            `yaml:"base_url"`
+	Headless    bool              `yaml:"headless"`
+	CookiesFile string            `yaml:"cookies_file"`
+	Coordinates CoordinatesConfig `yaml:"coordinates"`
+}
+
+type CoordinatesConfig struct {
+	// Canvas UI coordinates (calibrate based on your screen resolution)
+	AssetX  int `yaml:"asset_x"`   // X coordinate for asset selector
+	AssetY  int `yaml:"asset_y"`   // Y coordinate for asset selector
+	ExpiryX int `yaml:"expiry_x"`  // X coordinate for expiry selector
+	ExpiryY int `yaml:"expiry_y"`  // Y coordinate for expiry selector
+	AmountX int `yaml:"amount_x"`  // X coordinate for amount input
+	AmountY int `yaml:"amount_y"`  // Y coordinate for amount input
+	CallX   int `yaml:"call_x"`    // X coordinate for CALL/BUY button
+	CallY   int `yaml:"call_y"`    // Y coordinate for CALL/BUY button
+	PutX    int `yaml:"put_x"`     // X coordinate for PUT/SELL button
+	PutY    int `yaml:"put_y"`     // Y coordinate for PUT/SELL button
 }
 
 type TradingConfig struct {

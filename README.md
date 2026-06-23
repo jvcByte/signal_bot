@@ -14,18 +14,47 @@ Automated trading bot that monitors Telegram channels for trading signals and ex
 
 ## Quick Start
 
-1. **Copy the example config and fill in your credentials**:
-   ```bash
-   cp configs/config.example.yaml configs/config.yaml
-   # Edit configs/config.yaml with your Telegram API credentials and IQ Options login
-   ```
+### 1. Install Dependencies
+```bash
+make install
+```
 
-2. **Run the bot**:
-   ```bash
-   make run
-   ```
+### 2. Configure Your Credentials
+```bash
+cp configs/config.example.yaml configs/config.yaml
+# Edit configs/config.yaml with your Telegram API credentials and IQ Options login
+```
 
-3. **First run**: You'll be prompted to enter your Telegram verification code. The session will be saved for future runs.
+### 3. **IMPORTANT: Calibrate Coordinates**
+
+IQ Option uses a **Canvas-based UI** (not HTML elements), so you must calibrate click coordinates:
+
+```bash
+make calibrate
+```
+
+This will:
+- Open IQ Option in browser
+- Take a screenshot (`calibration_screenshot.png`)
+- Show instructions for finding coordinates
+
+Open the screenshot in an image editor and hover over:
+- Asset selector button (top-left)
+- Expiry selector button (top area)
+- Amount input field (center)
+- CALL button (bottom, green)
+- PUT button (bottom, red)
+
+Update `configs/config.yaml` with the pixel coordinates you find.
+
+**See [Canvas UI Guide](docs/CANVAS_UI.md) for detailed instructions.**
+
+### 4. Run the Bot
+```bash
+make run
+```
+
+**First run**: Enter your Telegram verification code when prompted. Session is saved for future runs.
 
 ## Configuration
 
@@ -42,7 +71,20 @@ iqoption:
   email: "your@email.com"
   password: "your_password"
   demo_mode: true              # Start with demo mode!
-  headless: false              # Set true for production
+  headless: false              # Keep false to see browser during calibration
+  
+  # Canvas UI Coordinates - MUST CALIBRATE! Run: make calibrate
+  coordinates:
+    asset_x: 150    # Asset selector button
+    asset_y: 50
+    expiry_x: 300   # Expiry selector button
+    expiry_y: 100
+    amount_x: 640   # Amount input field
+    amount_y: 400
+    call_x: 500     # CALL/BUY button (green)
+    call_y: 650
+    put_x: 780      # PUT/SELL button (red)
+    put_y: 650
 
 trading:
   default_amount: 10.0
@@ -55,9 +97,12 @@ risk:
   min_signal_confidence: 0.7
 ```
 
+**Important:** Default coordinates are placeholders. You must calibrate them for your screen resolution.
+
 ## Documentation
 
 ### Core Documentation
+- [Canvas UI Guide](docs/CANVAS_UI.md) - **START HERE** - Coordinate calibration
 - [Architecture](docs/ARCHITECTURE.md) - System design and components
 - [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
 - [Session Management](docs/SESSION_MANAGEMENT.md) - How sessions work
@@ -75,6 +120,7 @@ risk:
 signal-bot/
 ├── cmd/
 │   ├── bot/           # Main bot executable
+│   ├── calibrate/     # Coordinate calibration tool
 │   └── test-parser/   # Signal parser testing tool
 ├── internal/
 │   ├── bot/           # Bot orchestration and worker pool

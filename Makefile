@@ -1,10 +1,15 @@
-.PHONY: build run test clean install deps
+.PHONY: build run test clean install deps calibrate
 
 build:
 	go build -o bin/signal-bot cmd/bot/main.go
 
 run:
 	go run cmd/bot/main.go -config configs/config.yaml
+
+calibrate:
+	@echo "🎯 Starting coordinate calibration tool..."
+	@echo "This will open IQ Option and take a screenshot"
+	go run cmd/calibrate/main.go
 
 test:
 	go test -v ./...
@@ -20,6 +25,7 @@ clean:
 	rm -rf logs/
 	rm -rf data/
 	rm -rf session/
+	rm -f calibration_screenshot.png
 
 install:
 	go mod download
