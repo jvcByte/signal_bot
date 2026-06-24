@@ -232,14 +232,15 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 	}
 
 	// Parse response - server responds with name=option
+	t.logger.Debug().RawJSON("raw_response", resp).Msg("← option response")
+
 	var openResp struct {
 		IsSuccessful bool   `json:"isSuccessful"`
 		Message      string `json:"message"`
 		ID           int64  `json:"id"`
-		// sometimes nested under result
-		Result struct {
-			ID       int64  `json:"id"`
-			Message  string `json:"message"`
+		Result       struct {
+			ID      int64  `json:"id"`
+			Message string `json:"message"`
 		} `json:"result"`
 	}
 
@@ -249,20 +250,24 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 		return trade, fmt.Errorf("parse open-option response: %w", err)
 	}
 
-	// Check for rejection - message field indicates error
-	errMsg := openResp.Message
-	if errMsg == "" {
-		errMsg = openResp.Result.Message
-	}
-	if errMsg != "" {
-		trade.Status = models.StatusFailed
-		trade.ErrorMsg = errMsg
-		return trade, fmt.Errorf("trade rejected: %s", errMsg)
-	}
-
+	// A non-zero ID means success regardless of other fields
 	optionID := openResp.ID
 	if optionID == 0 {
 		optionID = openResp.Result.ID
+	}
+
+	if optionID == 0 {
+		// No ID = rejected - find the error message
+		errMsg := openResp.Message
+		if errMsg == "" {
+			errMsg = openResp.Result.Message
+		}
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("unknown rejection (raw: %s)", string(resp))
+		}
+		trade.Status = models.StatusFailed
+		trade.ErrorMsg = errMsg
+		return trade, fmt.Errorf("trade rejected: %s", errMsg)
 	}
 
 	trade.Status = models.StatusOpen
