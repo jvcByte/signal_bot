@@ -71,28 +71,21 @@ var assetIDs = map[string]int{
 	"NZDCHF": 26,
 }
 
-// resolveAssetID returns the active_id for a given asset name
-// Tries OTC first (available 24/7), then regular
-func resolveAssetID(asset string) (int, bool) {
+// resolveAssetID returns the active_id for a given asset name.
+// Mexy signals are always OTC pairs so we always resolve to OTC first.
+func resolveAssetID(asset string) (int, string, bool) {
 	asset = strings.ToUpper(strings.TrimSpace(asset))
+	asset = strings.Replace(asset, "-OTC", "", 1) // normalize: strip OTC suffix if present
 
-	// Try exact match first
-	if id, ok := assetIDs[asset]; ok {
-		return id, true
-	}
-
-	// Try with -OTC suffix
+	// Always use OTC active_id (Mexy signals are OTC pairs, available 24/7)
 	if id, ok := assetIDs[asset+"-OTC"]; ok {
-		return id, true
+		return id, asset + "-OTC", true
 	}
-
-	// Try without -OTC suffix
-	asset = strings.Replace(asset, "-OTC", "", 1)
+	// Fall back to regular market only if no OTC version exists
 	if id, ok := assetIDs[asset]; ok {
-		return id, true
+		return id, asset, true
 	}
-
-	return 0, false
+	return 0, "", false
 }
 
 // GetBalance returns the current balance for the configured account type
@@ -165,16 +158,17 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 		PlacedAt: time.Now(),
 	}
 
-	// Resolve asset ID
-	activeID, ok := resolveAssetID(signal.Asset)
+	// Resolve asset ID - prefers OTC (24/7) over regular market
+	activeID, resolvedAsset, ok := resolveAssetID(signal.Asset)
 	if !ok {
 		trade.Status = models.StatusFailed
 		trade.ErrorMsg = fmt.Sprintf("unknown asset: %s", signal.Asset)
-		return trade, fmt.Errorf("unknown asset %s - add to assetIDs map", signal.Asset)
+		return trade, fmt.Errorf("unknown asset %s - add to assetIDs map in trade.go", signal.Asset)
 	}
 
 	t.logger.Info().
-		Str("asset", signal.Asset).
+		Str("requested", signal.Asset).
+		Str("resolved", resolvedAsset).
 		Int("active_id", activeID).
 		Str("direction", string(signal.Direction)).
 		Int("expiry_min", signal.Expiry).
@@ -230,23 +224,22 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 	}
 
 	// IQ Option wraps commands in "sendMessage"
-	resp, err := t.sendAndWait("sendMessage", body, "binary-options.open-option")
+	resp, err := t.sendAndWait("sendMessage", body, "option")
 	if err != nil {
 		trade.Status = models.StatusFailed
 		trade.ErrorMsg = err.Error()
 		return trade, fmt.Errorf("open-option: %w", err)
 	}
 
-	// Parse response
+	// Parse response - server responds with name=option
 	var openResp struct {
 		IsSuccessful bool   `json:"isSuccessful"`
 		Message      string `json:"message"`
-		Result       struct {
-			ID        int64   `json:"id"`
-			Asset     string  `json:"active"`
-			Direction string  `json:"direction"`
-			Price     float64 `json:"price"`
-			ExpireAt  int64   `json:"expired"`
+		ID           int64  `json:"id"`
+		// sometimes nested under result
+		Result struct {
+			ID       int64  `json:"id"`
+			Message  string `json:"message"`
 		} `json:"result"`
 	}
 
@@ -256,16 +249,26 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 		return trade, fmt.Errorf("parse open-option response: %w", err)
 	}
 
-	if !openResp.IsSuccessful {
+	// Check for rejection - message field indicates error
+	errMsg := openResp.Message
+	if errMsg == "" {
+		errMsg = openResp.Result.Message
+	}
+	if errMsg != "" {
 		trade.Status = models.StatusFailed
-		trade.ErrorMsg = openResp.Message
-		return trade, fmt.Errorf("trade rejected: %s", openResp.Message)
+		trade.ErrorMsg = errMsg
+		return trade, fmt.Errorf("trade rejected: %s", errMsg)
+	}
+
+	optionID := openResp.ID
+	if optionID == 0 {
+		optionID = openResp.Result.ID
 	}
 
 	trade.Status = models.StatusOpen
 	t.logger.Info().
-		Int64("option_id", openResp.Result.ID).
-		Str("asset", signal.Asset).
+		Int64("option_id", optionID).
+		Str("asset", resolvedAsset).
 		Str("direction", string(signal.Direction)).
 		Float64("amount", amount).
 		Msg("✅ Trade placed successfully!")
