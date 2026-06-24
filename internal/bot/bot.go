@@ -14,22 +14,21 @@ import (
 	"signal-bot/internal/parser"
 	"signal-bot/internal/queue"
 	"signal-bot/internal/telegram"
-	"signal-bot/internal/trader"
+	"signal-bot/internal/wstrader"
 	"signal-bot/pkg/models"
 )
 
 type Bot struct {
 	cfg      *config.Config
 	tg       *telegram.Client
-	trader   *trader.Trader
+	trader   *wstrader.Trader
 	parser   *parser.Parser
 	queue    *queue.Queue
 	db       *database.Database
 	logger   zerolog.Logger
-	
-	activeTradesCount int
-	mu                sync.RWMutex
-	dailyStats        *DailyStats
+
+	mu         sync.RWMutex
+	dailyStats *DailyStats
 }
 
 type DailyStats struct {
@@ -48,7 +47,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Bot, error) {
 	return &Bot{
 		cfg:      cfg,
 		tg:       telegram.New(&cfg.Telegram, logger),
-		trader:   trader.New(&cfg.IQOption, logger),
+		trader:   wstrader.New(&cfg.IQOption, logger),
 		parser:   parser.New(),
 		queue:    queue.New(100),
 		db:       db,
@@ -64,9 +63,9 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.logger.Info().Msg("    SIGNAL BOT STARTING UP")
 	b.logger.Info().Msg("═══════════════════════════════════════")
 
-	// Connect to IQ Option first
-	b.logger.Info().Msg("→ Step 1/3: Connecting to IQ Option...")
-	if err := b.trader.Connect(ctx); err != nil {
+	// Connect to IQ Option via WebSocket API
+	b.logger.Info().Msg("→ Step 1/3: Connecting to IQ Option via WebSocket API...")
+	if err := b.trader.Connect(); err != nil {
 		return fmt.Errorf("trader connect: %w", err)
 	}
 
@@ -322,7 +321,7 @@ func (b *Bot) tradeWorker(ctx context.Context, workerID int) {
 			Float64("amount", b.cfg.Trading.DefaultAmount).
 			Msg("🎯 EXECUTING TRADE...")
 			
-		trade, err := b.trader.PlaceTrade(ctx, signal, b.cfg.Trading.DefaultAmount)
+		trade, err := b.trader.PlaceTrade(signal, b.cfg.Trading.DefaultAmount)
 		if err != nil {
 			b.logger.Error().
 				Int("worker_id", workerID).
