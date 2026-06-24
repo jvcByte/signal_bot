@@ -68,7 +68,7 @@ func (t *Trader) readLoop() {
 func (t *Trader) routeByName(name string, msg json.RawMessage) {
 	switch name {
 	case "profile":
-		// balances updated push
+		// profile push contains balances
 		var profile struct {
 			Balances []Balance `json:"balances"`
 		}
@@ -76,9 +76,10 @@ func (t *Trader) routeByName(name string, msg json.RawMessage) {
 			t.balancesMu.Lock()
 			t.balances = profile.Balances
 			t.balancesMu.Unlock()
+			t.logger.Debug().Int("count", len(profile.Balances)).Msg("balances updated from profile push")
 		}
-	case "timeSync":
-		// server time sync - ignore
+	case "heartbeat", "timeSync", "timesync":
+		// ignore
 	default:
 		t.logger.Debug().Str("name", name).Msg("← unhandled push message")
 	}
@@ -87,57 +88,15 @@ func (t *Trader) routeByName(name string, msg json.RawMessage) {
 // send sends a message and returns the request_id
 func (t *Trader) send(name string, body interface{}) (string, error) {
 	reqID := strconv.FormatInt(t.requestID.Add(1), 10)
-
-	msgBody, err := json.Marshal(body)
-	if err != nil {
-		return "", err
-	}
-
-	envelope := map[string]interface{}{
-		"name":       name,
-		"request_id": reqID,
-		"local_time": time.Now().UnixMilli(),
-		"msg":        json.RawMessage(msgBody),
-	}
-
-	data, err := json.Marshal(envelope)
-	if err != nil {
-		return "", err
-	}
-
-	t.logger.Debug().Str("name", name).Str("request_id", reqID).Msg("→ WS send")
-
-	t.mu.Lock()
-	err = t.conn.WriteMessage(websocket.TextMessage, data)
-	t.mu.Unlock()
-
-	return reqID, err
+	return reqID, t.writeEnvelope(name, body, reqID)
 }
 
 // sendAndWait sends a message and waits for a response matching by request_id or name
 func (t *Trader) sendAndWait(name string, body interface{}, waitForName string) (json.RawMessage, error) {
 	reqID := strconv.FormatInt(t.requestID.Add(1), 10)
 
-	msgBody, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-
-	envelope := map[string]interface{}{
-		"name":       name,
-		"request_id": reqID,
-		"local_time": time.Now().UnixMilli(),
-		"msg":        json.RawMessage(msgBody),
-	}
-
-	data, err := json.Marshal(envelope)
-	if err != nil {
-		return nil, err
-	}
-
 	ch := make(chan json.RawMessage, 1)
 
-	// Register under both request_id AND name so we catch either routing
 	t.pendingMu.Lock()
 	t.pending[reqID] = ch
 	t.pending["name:"+waitForName] = ch
@@ -150,14 +109,11 @@ func (t *Trader) sendAndWait(name string, body interface{}, waitForName string) 
 		t.pendingMu.Unlock()
 	}()
 
-	t.logger.Debug().Str("name", name).Str("request_id", reqID).Msg("→ WS send+wait")
-
-	t.mu.Lock()
-	err = t.conn.WriteMessage(websocket.TextMessage, data)
-	t.mu.Unlock()
-	if err != nil {
+	if err := t.writeEnvelope(name, body, reqID); err != nil {
 		return nil, fmt.Errorf("write: %w", err)
 	}
+
+	t.logger.Debug().Str("name", name).Str("request_id", reqID).Msg("→ WS send+wait")
 
 	select {
 	case resp := <-ch:
@@ -165,6 +121,42 @@ func (t *Trader) sendAndWait(name string, body interface{}, waitForName string) 
 	case <-time.After(15 * time.Second):
 		return nil, fmt.Errorf("timeout waiting for response to '%s'", name)
 	}
+}
+
+// writeEnvelope marshals and sends the WebSocket message
+func (t *Trader) writeEnvelope(name string, body interface{}, reqID string) error {
+	var msgRaw json.RawMessage
+	var err error
+
+	// body can be a plain string (e.g. ssid value) or a struct
+	switch v := body.(type) {
+	case string:
+		msgRaw, err = json.Marshal(v)
+	case json.RawMessage:
+		msgRaw = v
+	default:
+		msgRaw, err = json.Marshal(body)
+	}
+	if err != nil {
+		return err
+	}
+
+	envelope := map[string]interface{}{
+		"name":       name,
+		"request_id": reqID,
+		"local_time": time.Now().UnixMilli(),
+		"msg":        msgRaw,
+	}
+
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+
+	t.mu.Lock()
+	err = t.conn.WriteMessage(websocket.TextMessage, data)
+	t.mu.Unlock()
+	return err
 }
 
 // Close cleanly shuts down the WebSocket connection

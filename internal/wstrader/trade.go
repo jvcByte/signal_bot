@@ -182,6 +182,12 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 	}
 
 	type openOptionMsg struct {
+		Name    string      `json:"name"`
+		Version string      `json:"version"`
+		Body    interface{} `json:"body"`
+	}
+
+	type optionBody struct {
 		UserBalanceID int64   `json:"user_balance_id"`
 		ActiveID      int     `json:"active_id"`
 		OptionTypeID  int     `json:"option_type_id"`
@@ -191,15 +197,20 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 	}
 
 	body := openOptionMsg{
-		UserBalanceID: balanceID,
-		ActiveID:      activeID,
-		OptionTypeID:  optionTypeID,
-		Direction:     direction,
-		Expired:       signal.Expiry,
-		Price:         amount,
+		Name:    "binary-options.open-option",
+		Version: "1.0",
+		Body: optionBody{
+			UserBalanceID: balanceID,
+			ActiveID:      activeID,
+			OptionTypeID:  optionTypeID,
+			Direction:     direction,
+			Expired:       signal.Expiry,
+			Price:         amount,
+		},
 	}
 
-	resp, err := t.sendAndWait("binary-options.open-option", body, "binary-options.open-option")
+	// IQ Option wraps commands in "sendMessage"
+	resp, err := t.sendAndWait("sendMessage", body, "binary-options.open-option")
 	if err != nil {
 		trade.Status = models.StatusFailed
 		trade.ErrorMsg = err.Error()

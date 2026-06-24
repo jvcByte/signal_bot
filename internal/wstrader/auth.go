@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -26,6 +27,7 @@ func (t *Trader) Connect() error {
 	t.logger.Info().Msg("✓ WebSocket connected")
 
 	go t.readLoop()
+	go t.heartbeatLoop() // keep connection alive
 
 	if err := t.wsAuth(); err != nil {
 		return fmt.Errorf("ws auth: %w", err)
@@ -34,10 +36,6 @@ func (t *Trader) Connect() error {
 
 	if err := t.loadProfile(); err != nil {
 		return fmt.Errorf("load profile: %w", err)
-	}
-
-	if err := t.loadProfits(); err != nil {
-		t.logger.Warn().Err(err).Msg("could not load profit data (non-fatal)")
 	}
 
 	t.logger.Info().Msg("✅ IQ Option WebSocket trader ready")
@@ -107,11 +105,8 @@ func (t *Trader) dialWS() error {
 }
 
 func (t *Trader) wsAuth() error {
-	type authMsg struct {
-		SSID string `json:"ssid"`
-	}
-
-	resp, err := t.sendAndWait("ssid", authMsg{SSID: t.ssid}, "profile")
+	// IQ Option expects the SSID sent as the raw msg string (not a struct)
+	resp, err := t.sendAndWait("ssid", t.ssid, "profile")
 	if err != nil {
 		return fmt.Errorf("ssid message: %w", err)
 	}
@@ -129,67 +124,51 @@ func (t *Trader) wsAuth() error {
 }
 
 func (t *Trader) loadProfile() error {
-	resp, err := t.sendAndWait("get-profile", struct{}{}, "profile")
-	if err != nil {
-		return err
-	}
-
-	var profile struct {
-		IsSuccessful bool `json:"isSuccessful"`
-		Result       struct {
-			Balances []Balance `json:"balances"`
-		} `json:"result"`
-	}
-
-	if err := json.Unmarshal(resp, &profile); err != nil {
-		return fmt.Errorf("parse profile: %w", err)
-	}
-
-	t.balancesMu.Lock()
-	t.balances = profile.Result.Balances
-	t.balancesMu.Unlock()
-
-	for _, b := range t.balances {
-		label := "real"
-		if b.Type == 4 {
-			label = "practice"
+	// Profile/balances come as push after auth - just read from t.balances
+	// which gets populated by the profile push in readLoop
+	// Wait up to 3 seconds for it
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		t.balancesMu.RLock()
+		n := len(t.balances)
+		t.balancesMu.RUnlock()
+		if n > 0 {
+			for _, b := range t.balances {
+				label := "real"
+				if b.Type == 4 {
+					label = "practice"
+				}
+				t.logger.Info().
+					Str("type", label).
+					Float64("amount", b.Amount).
+					Str("currency", b.Currency).
+					Msg("💰 Balance loaded")
+			}
+			return nil
 		}
-		t.logger.Info().
-			Str("type", label).
-			Float64("amount", b.Amount).
-			Str("currency", b.Currency).
-			Msg("💰 Balance loaded")
+		time.Sleep(200 * time.Millisecond)
 	}
+	// Non-fatal - continue without balance
+	t.logger.Warn().Msg("could not load balances from profile push (non-fatal)")
 	return nil
 }
 
-func (t *Trader) loadProfits() error {
-	resp, err := t.sendAndWait("get-initialization-data", struct{}{}, "initialization-data")
-	if err != nil {
-		return err
-	}
-
-	var initData struct {
-		Result struct {
-			TurboOptions []struct {
-				ActiveID int     `json:"active_id"`
-				Profit   float64 `json:"profit"`
-			} `json:"turbo"`
-		} `json:"result"`
-	}
-
-	if err := json.Unmarshal(resp, &initData); err != nil {
-		return err
-	}
-
-	t.profitsMu.Lock()
-	defer t.profitsMu.Unlock()
-	for _, o := range initData.Result.TurboOptions {
-		key := fmt.Sprintf("%d", o.ActiveID)
-		if t.profits[key] == nil {
-			t.profits[key] = make(map[string]float64)
+// heartbeatLoop sends a heartbeat every 15s to keep the connection alive
+func (t *Trader) heartbeatLoop() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-t.done:
+			return
+		case <-ticker.C:
+			t.mu.Lock()
+			err := t.conn.WriteMessage(websocket.TextMessage, []byte(`{"name":"heartbeat","msg":{"userTime":0,"heartbeatTime":0}}`))
+			t.mu.Unlock()
+			if err != nil {
+				return
+			}
+			t.logger.Debug().Msg("♥ heartbeat sent")
 		}
-		t.profits[key]["turbo"] = o.Profit
 	}
-	return nil
 }
