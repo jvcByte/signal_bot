@@ -10,9 +10,20 @@ import (
 )
 
 // Asset ID map - sourced from IQ Option API constants
-// https://github.com/Lu-Yi-Hsun/iqoptionapi/blob/master/iqoptionapi/constants.py
+// OTC pairs (76-86) are available 24/7. All others are regular market hours only.
 var assetIDs = map[string]int{
-	// Forex regular
+	// ── OTC pairs (24/7, turbo binary options) ──
+	"EURUSD-OTC": 76,
+	"EURGBP-OTC": 77,
+	"USDCHF-OTC": 78,
+	"EURJPY-OTC": 79,
+	"NZDUSD-OTC": 80,
+	"GBPUSD-OTC": 81,
+	"GBPJPY-OTC": 84,
+	"USDJPY-OTC": 85,
+	"AUDCAD-OTC": 86,
+
+	// ── Regular forex (market hours only) ──
 	"EURUSD": 1,
 	"EURGBP": 2,
 	"GBPJPY": 3,
@@ -39,36 +50,37 @@ var assetIDs = map[string]int{
 	"GBPNZD": 947,
 	"NZDCAD": 948,
 	"NZDJPY": 949,
-	"USDNOK": 168,
 	"EURNZD": 212,
+	"USDNOK": 168,
 	"USDSEK": 219,
-	// OTC pairs (available 24/7 - primary market for Mexy signals)
-	"EURUSD-OTC": 76,
-	"EURGBP-OTC": 77,
-	"USDCHF-OTC": 78,
-	"EURJPY-OTC": 79,
-	"NZDUSD-OTC": 80,
-	"GBPUSD-OTC": 81,
-	"GBPJPY-OTC": 84,
-	"USDJPY-OTC": 85,
-	"AUDCAD-OTC": 86,
+}
+
+// otcPairs is the set of pairs that have 24/7 OTC versions
+var otcPairs = map[string]bool{
+	"EURUSD": true, "EURGBP": true, "USDCHF": true,
+	"EURJPY": true, "NZDUSD": true, "GBPUSD": true,
+	"GBPJPY": true, "USDJPY": true, "AUDCAD": true,
 }
 
 // resolveAssetID returns the active_id for a given asset.
-// Tries OTC first (24/7), falls back to regular market.
-func resolveAssetID(asset string) (int, string, bool) {
+// OTC version is preferred (24/7). Only 9 pairs have OTC versions on IQ Option.
+// Non-OTC pairs are market-hours only and will fail outside trading hours.
+func resolveAssetID(asset string) (int, string, bool, bool) {
 	asset = strings.ToUpper(strings.TrimSpace(asset))
 	asset = strings.Replace(asset, "-OTC", "", 1) // normalize
 
-	// Try OTC first
-	if id, ok := assetIDs[asset+"-OTC"]; ok {
-		return id, asset + "-OTC", true
+	// Check if OTC version exists for this pair
+	if otcPairs[asset] {
+		if id, ok := assetIDs[asset+"-OTC"]; ok {
+			return id, asset + "-OTC", true, true // id, name, found, isOTC
+		}
 	}
-	// Fall back to regular
+
+	// Fall back to regular market (may be closed outside trading hours)
 	if id, ok := assetIDs[asset]; ok {
-		return id, asset, true
+		return id, asset, true, false
 	}
-	return 0, "", false
+	return 0, "", false, false
 }
 
 // GetBalance returns the current balance for the configured account type
@@ -141,17 +153,24 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 		PlacedAt: time.Now(),
 	}
 
-	// Resolve asset ID - prefers OTC (24/7) over regular market
-	activeID, resolvedAsset, ok := resolveAssetID(signal.Asset)
+	// Resolve asset ID - OTC preferred (24/7), falls back to regular market
+	activeID, resolvedAsset, ok, isOTC := resolveAssetID(signal.Asset)
 	if !ok {
 		trade.Status = models.StatusFailed
 		trade.ErrorMsg = fmt.Sprintf("unknown asset: %s", signal.Asset)
 		return trade, fmt.Errorf("unknown asset %s - add to assetIDs map in trade.go", signal.Asset)
 	}
 
+	if !isOTC {
+		t.logger.Warn().
+			Str("asset", resolvedAsset).
+			Msg("⚠️  No OTC version for this pair - regular market may be closed outside trading hours")
+	}
+
 	t.logger.Info().
 		Str("requested", signal.Asset).
 		Str("resolved", resolvedAsset).
+		Bool("otc_24_7", isOTC).
 		Int("active_id", activeID).
 		Str("direction", string(signal.Direction)).
 		Int("expiry_min", signal.Expiry).

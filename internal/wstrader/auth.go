@@ -114,6 +114,14 @@ func (t *Trader) wsAuth() error {
 	// Log raw profile response to see exact balance format
 	t.logger.Debug().RawJSON("profile_response", resp).Msg("← raw profile data")
 
+	// Parse balances - try both top-level and nested formats
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(resp, &raw); err == nil {
+		if balancesJSON, ok := raw["balances"]; ok {
+			t.logger.Debug().RawJSON("balances_raw", balancesJSON).Msg("← raw balances field")
+		}
+	}
+
 	// Parse balances directly from the profile auth response
 	var profile struct {
 		IsSuccessful bool      `json:"isSuccessful"`
