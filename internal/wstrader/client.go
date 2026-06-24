@@ -60,10 +60,9 @@ type Balance struct {
 	Currency string  `json:"currency"`
 }
 
-// realAmount returns the actual balance - IQ Option may store in different units
-// We'll determine the correct divisor from the raw response logs
+// realAmount converts IQ Option's internal amount (cents) to actual value
 func (b Balance) realAmount() float64 {
-	return b.Amount // raw for now - check debug logs to determine correct unit
+	return b.Amount / 100.0
 }
 
 func New(cfg *config.IQOptionConfig, logger zerolog.Logger) *Trader {

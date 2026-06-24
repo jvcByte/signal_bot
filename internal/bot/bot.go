@@ -168,6 +168,15 @@ func (b *Bot) shouldTrade(signal *models.Signal) bool {
 		return true
 	}
 
+	// Check if asset is tradeable (OTC available 24/7, others need market hours)
+	if !wstrader.IsOTCAvailable(signal.Asset) {
+		b.logger.Warn().
+			Str("asset", signal.Asset).
+			Strs("otc_pairs", wstrader.GetOTCPairs()).
+			Msg("⛔ Asset has no OTC version - skipping (only available during market hours)")
+		return false
+	}
+
 	b.dailyStats.mu.RLock()
 	defer b.dailyStats.mu.RUnlock()
 
