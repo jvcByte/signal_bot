@@ -111,45 +111,69 @@ func (t *Trader) wsAuth() error {
 		return fmt.Errorf("ssid message: %w", err)
 	}
 
-	var errResp struct {
-		IsSuccessful bool   `json:"isSuccessful"`
-		Message      string `json:"message"`
+	// Parse balances directly from the profile auth response
+	var profile struct {
+		IsSuccessful bool      `json:"isSuccessful"`
+		Message      string    `json:"message"`
+		Balances     []Balance `json:"balances"`
 	}
-	if err := json.Unmarshal(resp, &errResp); err == nil {
-		if !errResp.IsSuccessful && errResp.Message != "" {
-			return fmt.Errorf("auth rejected: %s", errResp.Message)
+	if err := json.Unmarshal(resp, &profile); err == nil {
+		if !profile.IsSuccessful && profile.Message != "" {
+			return fmt.Errorf("auth rejected: %s", profile.Message)
+		}
+		if len(profile.Balances) > 0 {
+			t.balancesMu.Lock()
+			t.balances = profile.Balances
+			t.balancesMu.Unlock()
+			t.logger.Debug().Int("count", len(profile.Balances)).Msg("balances loaded from auth response")
 		}
 	}
 	return nil
 }
 
 func (t *Trader) loadProfile() error {
-	// Profile/balances come as push after auth - just read from t.balances
-	// which gets populated by the profile push in readLoop
-	// Wait up to 3 seconds for it
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		t.balancesMu.RLock()
-		n := len(t.balances)
-		t.balancesMu.RUnlock()
-		if n > 0 {
-			for _, b := range t.balances {
-				label := "real"
-				if b.Type == 4 {
-					label = "practice"
-				}
-				t.logger.Info().
-					Str("type", label).
-					Float64("amount", b.Amount).
-					Str("currency", b.Currency).
-					Msg("💰 Balance loaded")
+	// If balances already populated from auth response, log and return
+	t.balancesMu.RLock()
+	existing := len(t.balances)
+	t.balancesMu.RUnlock()
+
+	if existing == 0 {
+		// Explicitly request balances via get-balances
+		t.logger.Info().Msg("requesting balances explicitly...")
+		resp, err := t.sendAndWait("get-balances", struct{}{}, "balances")
+		if err == nil {
+			var result struct {
+				Balances []Balance `json:"balances"`
 			}
-			return nil
+			if json.Unmarshal(resp, &result) == nil && len(result.Balances) > 0 {
+				t.balancesMu.Lock()
+				t.balances = result.Balances
+				t.balancesMu.Unlock()
+			}
 		}
-		time.Sleep(200 * time.Millisecond)
 	}
-	// Non-fatal - continue without balance
-	t.logger.Warn().Msg("could not load balances from profile push (non-fatal)")
+
+	t.balancesMu.RLock()
+	balances := t.balances
+	t.balancesMu.RUnlock()
+
+	if len(balances) == 0 {
+		t.logger.Warn().Msg("no balances loaded - will retry at trade time")
+		return nil
+	}
+
+	for _, b := range balances {
+		label := "real"
+		if b.Type == 4 {
+			label = "practice"
+		}
+		t.logger.Info().
+			Str("type", label).
+			Float64("amount", b.Amount).
+			Str("currency", b.Currency).
+			Int64("id", b.ID).
+			Msg("💰 Balance loaded")
+	}
 	return nil
 }
 

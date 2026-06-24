@@ -116,19 +116,39 @@ func (t *Trader) GetBalance() (float64, error) {
 // getBalanceID returns the balance ID for the configured account type
 func (t *Trader) getBalanceID() (int64, error) {
 	t.balancesMu.RLock()
-	defer t.balancesMu.RUnlock()
+	balances := t.balances
+	t.balancesMu.RUnlock()
+
+	if len(balances) == 0 {
+		t.logger.Warn().Msg("no balances cached - trying get-balances request...")
+		resp, err := t.sendAndWait("get-balances", struct{}{}, "balances")
+		if err == nil {
+			var result struct {
+				Balances []Balance `json:"balances"`
+			}
+			if json.Unmarshal(resp, &result) == nil && len(result.Balances) > 0 {
+				t.balancesMu.Lock()
+				t.balances = result.Balances
+				t.balancesMu.Unlock()
+				balances = result.Balances
+			}
+		}
+	}
 
 	targetType := 1 // real
 	if t.cfg.DemoMode {
 		targetType = 4 // practice
 	}
 
-	for _, b := range t.balances {
+	t.logger.Debug().Int("target_type", targetType).Int("balance_count", len(balances)).Msg("looking for balance ID")
+
+	for _, b := range balances {
+		t.logger.Debug().Int64("id", b.ID).Int("type", b.Type).Float64("amount", b.Amount).Msg("checking balance")
 		if b.Type == targetType {
 			return b.ID, nil
 		}
 	}
-	return 0, fmt.Errorf("balance ID not found for account type %d", targetType)
+	return 0, fmt.Errorf("balance not found for account type %d (demo_mode=%v) - found %d balances", targetType, t.cfg.DemoMode, len(balances))
 }
 
 // PlaceTrade places a binary/turbo option trade via WebSocket
