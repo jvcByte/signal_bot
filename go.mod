@@ -6,6 +6,7 @@ require (
 	github.com/go-rod/rod v0.114.5
 	github.com/go-rod/stealth v0.4.9
 	github.com/google/uuid v1.5.0
+	github.com/gorilla/websocket v1.5.1
 	github.com/gotd/td v0.93.0
 	github.com/mattn/go-sqlite3 v1.14.19
 	github.com/rs/zerolog v1.31.0
@@ -17,7 +18,6 @@ require (
 	github.com/go-faster/errors v0.7.1 // indirect
 	github.com/go-faster/jx v1.1.0 // indirect
 	github.com/go-faster/xor v1.0.0 // indirect
-	github.com/gorilla/websocket v1.5.1 // indirect
 	github.com/gotd/ige v0.2.2 // indirect
 	github.com/gotd/neo v0.1.5 // indirect
 	github.com/klauspost/compress v1.17.4 // indirect

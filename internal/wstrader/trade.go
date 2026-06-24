@@ -9,79 +9,62 @@ import (
 	"signal-bot/pkg/models"
 )
 
-// Asset ID map for common pairs - IQ Option uses integer IDs
-// These are the active_id values used in the WebSocket API
+// Asset ID map - sourced from IQ Option API constants
+// https://github.com/Lu-Yi-Hsun/iqoptionapi/blob/master/iqoptionapi/constants.py
 var assetIDs = map[string]int{
-	// Forex OTC (available 24/7)
-	"EURUSD-OTC":  76,
-	"GBPUSD-OTC":  86,
-	"USDJPY-OTC":  85,
-	"AUDUSD-OTC":  272,
-	"EURJPY-OTC":  273,
-	"GBPJPY-OTC":  274,
-	"NZDUSD-OTC":  284,
-	"USDCAD-OTC":  283,
-	"USDCHF-OTC":  282,
-	"AUDCAD-OTC":  185,
-	"EURCAD-OTC":  188,
-	"EURGBP-OTC":  189,
-	"GBPCAD-OTC":  199,
-	"GBPNZD-OTC":  201,
-	"EURAUD-OTC":  186,
-	"AUDJPY-OTC":  184,
-	"CADJPY-OTC":  187,
-	"CHFJPY-OTC":  275,
-	"GBPAUD-OTC":  198,
-	"GBPCHF-OTC":  200,
-	"NZDJPY-OTC":  202,
-	"AUDNZD-OTC":  276,
-	"CADCHF-OTC":  277,
-	"EURCHF-OTC":  278,
-	"EURNZD-OTC":  279,
-	"AUDCHF-OTC":  280,
-	"NZDCAD-OTC":  281,
-	"USDNOK-OTC":  285,
-	"USDSEK-OTC":  286,
-	// Forex (market hours)
+	// Forex regular
 	"EURUSD": 1,
-	"GBPUSD": 2,
-	"USDJPY": 3,
-	"AUDUSD": 4,
-	"NZDUSD": 5,
-	"USDCAD": 6,
-	"USDCHF": 7,
-	"EURJPY": 8,
-	"GBPJPY": 9,
-	"EURGBP": 10,
-	"EURAUD": 11,
-	"EURCAD": 12,
-	"EURCHF": 13,
-	"GBPAUD": 14,
-	"GBPCAD": 15,
-	"GBPCHF": 16,
-	"AUDJPY": 17,
-	"CADJPY": 18,
-	"CHFJPY": 19,
-	"AUDCAD": 20,
-	"AUDCHF": 21,
-	"AUDNZD": 22,
-	"CADCHF": 23,
-	"NZDJPY": 24,
-	"NZDCAD": 25,
-	"NZDCHF": 26,
+	"EURGBP": 2,
+	"GBPJPY": 3,
+	"EURJPY": 4,
+	"GBPUSD": 5,
+	"USDJPY": 6,
+	"AUDCAD": 7,
+	"NZDUSD": 8,
+	"USDCHF": 72,
+	"AUDUSD": 99,
+	"USDCAD": 100,
+	"AUDJPY": 101,
+	"GBPCAD": 102,
+	"GBPCHF": 103,
+	"GBPAUD": 104,
+	"EURCAD": 105,
+	"CHFJPY": 106,
+	"CADCHF": 107,
+	"EURAUD": 108,
+	"AUDCHF": 943,
+	"AUDNZD": 944,
+	"CADJPY": 945,
+	"EURCHF": 946,
+	"GBPNZD": 947,
+	"NZDCAD": 948,
+	"NZDJPY": 949,
+	"USDNOK": 168,
+	"EURNZD": 212,
+	"USDSEK": 219,
+	// OTC pairs (available 24/7 - primary market for Mexy signals)
+	"EURUSD-OTC": 76,
+	"EURGBP-OTC": 77,
+	"USDCHF-OTC": 78,
+	"EURJPY-OTC": 79,
+	"NZDUSD-OTC": 80,
+	"GBPUSD-OTC": 81,
+	"GBPJPY-OTC": 84,
+	"USDJPY-OTC": 85,
+	"AUDCAD-OTC": 86,
 }
 
-// resolveAssetID returns the active_id for a given asset name.
-// Mexy signals are always OTC pairs so we always resolve to OTC first.
+// resolveAssetID returns the active_id for a given asset.
+// Tries OTC first (24/7), falls back to regular market.
 func resolveAssetID(asset string) (int, string, bool) {
 	asset = strings.ToUpper(strings.TrimSpace(asset))
-	asset = strings.Replace(asset, "-OTC", "", 1) // normalize: strip OTC suffix if present
+	asset = strings.Replace(asset, "-OTC", "", 1) // normalize
 
-	// Always use OTC active_id (Mexy signals are OTC pairs, available 24/7)
+	// Try OTC first
 	if id, ok := assetIDs[asset+"-OTC"]; ok {
 		return id, asset + "-OTC", true
 	}
-	// Fall back to regular market only if no OTC version exists
+	// Fall back to regular
 	if id, ok := assetIDs[asset]; ok {
 		return id, asset, true
 	}
@@ -100,7 +83,7 @@ func (t *Trader) GetBalance() (float64, error) {
 
 	for _, b := range t.balances {
 		if b.Type == targetType {
-			return b.Amount, nil
+			return b.realAmount(), nil
 		}
 	}
 	return 0, fmt.Errorf("balance not found for account type %d", targetType)
@@ -136,7 +119,7 @@ func (t *Trader) getBalanceID() (int64, error) {
 	t.logger.Debug().Int("target_type", targetType).Int("balance_count", len(balances)).Msg("looking for balance ID")
 
 	for _, b := range balances {
-		t.logger.Debug().Int64("id", b.ID).Int("type", b.Type).Float64("amount", b.Amount).Msg("checking balance")
+		t.logger.Debug().Int64("id", b.ID).Int("type", b.Type).Float64("amount", b.realAmount()).Msg("checking balance")
 		if b.Type == targetType {
 			return b.ID, nil
 		}

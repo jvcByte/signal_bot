@@ -111,6 +111,9 @@ func (t *Trader) wsAuth() error {
 		return fmt.Errorf("ssid message: %w", err)
 	}
 
+	// Log raw profile response to see exact balance format
+	t.logger.Debug().RawJSON("profile_response", resp).Msg("← raw profile data")
+
 	// Parse balances directly from the profile auth response
 	var profile struct {
 		IsSuccessful bool      `json:"isSuccessful"`
@@ -169,7 +172,7 @@ func (t *Trader) loadProfile() error {
 		}
 		t.logger.Info().
 			Str("type", label).
-			Float64("amount", b.Amount).
+			Float64("amount", b.realAmount()).
 			Str("currency", b.Currency).
 			Int64("id", b.ID).
 			Msg("💰 Balance loaded")
