@@ -60,6 +60,8 @@ func (c *Client) ConnectAndListen(ctx context.Context, handler MessageHandler) e
 
 	for {
 		err := c.client.Run(ctx, func(ctx context.Context) error {
+			c.api = c.client.API() // must be set inside Run
+			c.logger.Debug().Msg("telegram API client initialized")
 
 			c.logger.Info().Msg("checking authentication status...")
 			status, err := c.client.Auth().Status(ctx)
