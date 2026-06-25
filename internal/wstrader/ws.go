@@ -79,16 +79,14 @@ func (t *Trader) routeByName(name string, msg json.RawMessage) {
 		}
 
 	case "option":
-		// Fired when trade opens - ignore (no status field yet)
-		t.handleOptionPush(msg)
+		// Trade open confirmation - ignore (no result yet)
 
 	case "option-closed", "socket-option-closed":
-		// Fired when trade expires with final result
+		// Final result - process win/loss
 		t.handleOptionPush(msg)
 
 	case "option-changed", "option-archived":
-		// Intermediate state updates - also check for result
-		t.handleOptionPush(msg)
+		// Intermediate updates - ignore to avoid double-counting
 
 	case "heartbeat", "timeSync", "timesync":
 		// ignore
