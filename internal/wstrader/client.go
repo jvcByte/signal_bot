@@ -68,6 +68,10 @@ type Trader struct {
 	balances   []Balance
 	balancesMu sync.RWMutex
 
+	// cached asset list to avoid repeated API calls
+	assetCache   map[string]int // map[assetName]activeID
+	assetCacheMu sync.RWMutex
+
 	profits   map[string]map[string]float64
 	profitsMu sync.RWMutex
 
@@ -75,10 +79,16 @@ type Trader struct {
 }
 
 type Balance struct {
-	ID       int64   `json:"id"`
-	Type     int     `json:"type"` // 1=real, 4=practice
-	Amount   float64 `json:"amount"`
-	Currency string  `json:"currency"`
+	ID          int64   `json:"id"`
+	Type        int     `json:"type"` // 1=real, 4=practice
+	Amount      float64 `json:"amount"`
+	BonusAmount float64 `json:"bonus_amount"`
+	Currency    string  `json:"currency"`
+}
+
+// TotalAmount returns the combined regular + bonus balance
+func (b Balance) TotalAmount() float64 {
+	return b.Amount + b.BonusAmount
 }
 
 // realAmount converts IQ Option's internal amount (cents) to actual value
@@ -94,6 +104,7 @@ func New(cfg *config.IQOptionConfig, logger zerolog.Logger) *Trader {
 		jar:        jar,
 		pending:    make(map[string]chan json.RawMessage),
 		openTrades: make(map[int64]openTrade),
+		assetCache: make(map[string]int),
 		profits:    make(map[string]map[string]float64),
 		done:       make(chan struct{}),
 	}

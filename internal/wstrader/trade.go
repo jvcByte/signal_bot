@@ -10,76 +10,6 @@ import (
 	"signal-bot/pkg/models"
 )
 
-// Asset ID map - sourced from IQ Option API constants
-// OTC pairs (76-86) are available 24/7. All others are regular market hours only.
-var assetIDs = map[string]int{
-	// ── OTC pairs (24/7, turbo binary options) ──
-	"EURUSD-OTC": 76,
-	"EURGBP-OTC": 77,
-	"USDCHF-OTC": 78,
-	"EURJPY-OTC": 79,
-	"NZDUSD-OTC": 80,
-	"GBPUSD-OTC": 81,
-	"GBPJPY-OTC": 84,
-	"USDJPY-OTC": 85,
-	"AUDCAD-OTC": 86,
-
-	// ── Regular forex (market hours only) ──
-	"EURUSD": 1,
-	"EURGBP": 2,
-	"GBPJPY": 3,
-	"EURJPY": 4,
-	"GBPUSD": 5,
-	"USDJPY": 6,
-	"AUDCAD": 7,
-	"NZDUSD": 8,
-	"USDCHF": 72,
-	"AUDUSD": 99,
-	"USDCAD": 100,
-	"AUDJPY": 101,
-	"GBPCAD": 102,
-	"GBPCHF": 103,
-	"GBPAUD": 104,
-	"EURCAD": 105,
-	"CHFJPY": 106,
-	"CADCHF": 107,
-	"EURAUD": 108,
-	"AUDCHF": 943,
-	"AUDNZD": 944,
-	"CADJPY": 945,
-	"EURCHF": 946,
-	"GBPNZD": 947,
-	"NZDCAD": 948,
-	"NZDJPY": 949,
-	"EURNZD": 212,
-	"USDNOK": 168,
-	"USDSEK": 219,
-}
-
-// otcPairs is the set of pairs that have 24/7 OTC versions
-var otcPairs = map[string]bool{
-	"EURUSD": true, "EURGBP": true, "USDCHF": true,
-	"EURJPY": true, "NZDUSD": true, "GBPUSD": true,
-	"GBPJPY": true, "USDJPY": true, "AUDCAD": true,
-}
-
-// resolveAssetID returns the active_id for a given asset.
-// Tries OTC version first, falls back to regular market ID.
-func resolveAssetID(asset string) (int, string, bool) {
-	asset = strings.ToUpper(strings.TrimSpace(asset))
-	asset = strings.Replace(asset, "-OTC", "", 1)
-
-	if otcPairs[asset] {
-		if id, ok := assetIDs[asset+"-OTC"]; ok {
-			return id, asset + "-OTC", true
-		}
-	}
-	if id, ok := assetIDs[asset]; ok {
-		return id, asset, true
-	}
-	return 0, "", false
-}
-
 // GetBalance returns the current balance for the configured account type
 func (t *Trader) GetBalance() (float64, error) {
 	t.balancesMu.RLock()
@@ -92,7 +22,7 @@ func (t *Trader) GetBalance() (float64, error) {
 
 	for _, b := range t.balances {
 		if b.Type == targetType {
-			return b.Amount, nil
+			return b.TotalAmount(), nil
 		}
 	}
 	return 0, fmt.Errorf("balance not found for account type %d", targetType)
@@ -150,17 +80,18 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 		PlacedAt: time.Now(),
 	}
 
-	// Resolve asset ID - OTC preferred (24/7), falls back to regular market
-	activeID, resolvedAsset, ok := resolveAssetID(signal.Asset)
-	if !ok {
+	// Get asset ID dynamically from IQ Option API (cached after first lookup)
+	activeID, resolvedAsset, isOTC, found := t.getActiveIDFromAPI(signal.Asset)
+	if !found {
 		trade.Status = models.StatusFailed
-		trade.ErrorMsg = fmt.Sprintf("unknown asset: %s", signal.Asset)
-		return trade, fmt.Errorf("unknown asset %s - add to assetIDs map in trade.go", signal.Asset)
+		trade.ErrorMsg = fmt.Sprintf("asset not available: %s", signal.Asset)
+		return trade, fmt.Errorf("asset %s not found in IQ Option's available instruments", signal.Asset)
 	}
 
 	t.logger.Info().
 		Str("requested", signal.Asset).
 		Str("resolved", resolvedAsset).
+		Bool("is_otc", isOTC).
 		Int("active_id", activeID).
 		Str("direction", string(signal.Direction)).
 		Int("expiry_min", signal.Expiry).
@@ -268,6 +199,14 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 		if errMsg == "" {
 			errMsg = fmt.Sprintf("unknown rejection (raw: %s)", string(resp))
 		}
+		
+		// Add context for common errors
+		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "Active") {
+			if !isOTC {
+				errMsg = fmt.Sprintf("%s (market likely closed - %s has no OTC version for 24/7 trading)", errMsg, signal.Asset)
+			}
+		}
+		
 		trade.Status = models.StatusFailed
 		trade.ErrorMsg = errMsg
 		return trade, fmt.Errorf("trade rejected: %s", errMsg)

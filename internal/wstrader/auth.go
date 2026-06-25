@@ -179,7 +179,18 @@ func (t *Trader) wsAuth() error {
 			t.balancesMu.Lock()
 			t.balances = profile.Balances
 			t.balancesMu.Unlock()
-			t.logger.Debug().Int("count", len(profile.Balances)).Msg("balances loaded from auth response")
+			t.logger.Info().Int("count", len(profile.Balances)).Msg("✓ balances loaded from auth response")
+			
+			// Log each balance in detail
+			for i, b := range profile.Balances {
+				t.logger.Info().
+					Int("index", i).
+					Int64("id", b.ID).
+					Int("type", b.Type).
+					Float64("amount", b.Amount).
+					Str("currency", b.Currency).
+					Msg("📊 balance detail")
+			}
 		}
 	}
 	return nil
@@ -196,6 +207,8 @@ func (t *Trader) loadProfile() error {
 		t.logger.Info().Msg("requesting balances explicitly...")
 		resp, err := t.sendAndWait("get-balances", struct{}{}, "balances")
 		if err == nil {
+			t.logger.Debug().RawJSON("get_balances_response", resp).Msg("← raw get-balances response")
+			
 			var result struct {
 				Balances []Balance `json:"balances"`
 			}
@@ -203,7 +216,11 @@ func (t *Trader) loadProfile() error {
 				t.balancesMu.Lock()
 				t.balances = result.Balances
 				t.balancesMu.Unlock()
+				
+				t.logger.Info().Int("count", len(result.Balances)).Msg("✓ loaded balances from get-balances")
 			}
+		} else {
+			t.logger.Warn().Err(err).Msg("get-balances request failed")
 		}
 	}
 
@@ -216,14 +233,21 @@ func (t *Trader) loadProfile() error {
 		return nil
 	}
 
-	for _, b := range balances {
-		label := "real"
-		if b.Type == 4 {
+	t.logger.Info().Int("total_balances", len(balances)).Msg("📊 All balances from IQ Option:")
+	for i, b := range balances {
+		label := fmt.Sprintf("type_%d", b.Type)
+		if b.Type == 1 {
+			label = "real"
+		} else if b.Type == 4 {
 			label = "practice"
 		}
 		t.logger.Info().
+			Int("index", i).
 			Str("type", label).
+			Int("type_id", b.Type).
 			Float64("amount", b.Amount).
+			Float64("bonus_amount", b.BonusAmount).
+			Float64("total", b.TotalAmount()).
 			Str("currency", b.Currency).
 			Int64("id", b.ID).
 			Msg("💰 Balance loaded")
