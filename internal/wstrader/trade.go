@@ -280,6 +280,14 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 		Float64("amount", amount).
 		Msg("✅ Trade placed successfully!")
 
+	// Register open trade so we can match the result when it closes
+	t.openTradesMu.Lock()
+	t.openTrades[optionID] = openTrade{
+		tradeID: trade.ID,
+		amount:  amount,
+	}
+	t.openTradesMu.Unlock()
+
 	return trade, nil
 }
 

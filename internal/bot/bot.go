@@ -69,6 +69,9 @@ func (b *Bot) Start(ctx context.Context) error {
 		return fmt.Errorf("trader connect: %w", err)
 	}
 
+	// Register trade result handler
+	b.trader.SetResultHandler(b.handleTradeResult)
+
 	// Start workers
 	b.logger.Info().
 		Int("workers", b.cfg.Trading.MaxConcurrentTrades).
@@ -363,6 +366,52 @@ func (b *Bot) tradeWorker(ctx context.Context, workerID int) {
 		}
 
 		b.logger.Info().Int("worker_id", workerID).Msg("✓ worker cycle complete")
+	}
+}
+
+func (b *Bot) handleTradeResult(result wstrader.TradeResult) {
+	now := result.ClosedAt
+
+	status := models.StatusClosed
+	tradeResult := models.ResultLose
+	if result.Win {
+		tradeResult = models.ResultWin
+	}
+
+	resultStr := "LOSS ❌"
+	if result.Win {
+		resultStr = "WIN  ✅"
+	}
+
+	b.logger.Info().
+		Str("trade_id", result.TradeID).
+		Str("result", resultStr).
+		Float64("profit", result.Profit).
+		Msg("🏁 Trade closed")
+
+	// Update trade in database
+	trade := &models.Trade{
+		ID:       result.TradeID,
+		Status:   status,
+		Result:   tradeResult,
+		Profit:   result.Profit,
+		ClosedAt: &now,
+	}
+	if err := b.db.UpdateTrade(trade); err != nil {
+		b.logger.Error().Err(err).Str("trade_id", result.TradeID).Msg("failed to update trade result")
+	}
+
+	// Update daily P&L so loss limits work correctly
+	if !result.Win {
+		b.dailyStats.mu.Lock()
+		b.dailyStats.TotalLoss += -result.Profit // profit is negative on loss
+		loss := b.dailyStats.TotalLoss
+		b.dailyStats.mu.Unlock()
+
+		b.logger.Warn().
+			Float64("daily_loss", loss).
+			Float64("limit", b.cfg.Trading.MaxDailyLoss).
+			Msg("📉 Loss recorded")
 	}
 }
 

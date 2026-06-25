@@ -68,7 +68,6 @@ func (t *Trader) readLoop() {
 func (t *Trader) routeByName(name string, msg json.RawMessage) {
 	switch name {
 	case "profile":
-		// profile push contains balances
 		var profile struct {
 			Balances []Balance `json:"balances"`
 		}
@@ -78,10 +77,73 @@ func (t *Trader) routeByName(name string, msg json.RawMessage) {
 			t.balancesMu.Unlock()
 			t.logger.Debug().Int("count", len(profile.Balances)).Msg("balances updated from profile push")
 		}
+
+	case "option":
+		// Fired both when trade opens AND when it closes.
+		// We only care about closed trades (win_amount or lost=true present).
+		t.handleOptionPush(msg)
+
 	case "heartbeat", "timeSync", "timesync":
 		// ignore
+
 	default:
 		t.logger.Debug().Str("name", name).Msg("← unhandled push message")
+	}
+}
+
+// handleOptionPush processes option result pushes from IQ Option
+func (t *Trader) handleOptionPush(msg json.RawMessage) {
+	var opt struct {
+		ID         int64   `json:"id"`
+		Type       string  `json:"type"`
+		Price      float64 `json:"price"`   // amount staked (cents)
+		WinAmount  float64 `json:"win_amount"` // non-zero on WIN
+		Profit     float64 `json:"profit"`     // net profit (cents), negative on loss
+		Status     string  `json:"status"`     // "win" / "loose" / "equal"
+		ClosedAt   int64   `json:"exp"`        // expiry timestamp
+	}
+
+	if err := json.Unmarshal(msg, &opt); err != nil || opt.ID == 0 {
+		return
+	}
+
+	// Only handle closed options (status present)
+	if opt.Status == "" {
+		return
+	}
+
+	t.openTradesMu.Lock()
+	trade, exists := t.openTrades[opt.ID]
+	if exists {
+		delete(t.openTrades, opt.ID)
+	}
+	t.openTradesMu.Unlock()
+
+	win := opt.Status == "win"
+	profit := opt.Profit / 100.0 // convert cents to dollars
+	if !win {
+		profit = -(opt.Price / 100.0) // loss = full stake
+	}
+
+	resultStr := "LOSS ❌"
+	if win {
+		resultStr = "WIN ✅"
+	}
+
+	t.logger.Info().
+		Int64("option_id", opt.ID).
+		Str("result", resultStr).
+		Float64("profit", profit).
+		Msg("🏁 Trade result received")
+
+	if t.onResult != nil {
+		t.onResult(TradeResult{
+			OptionID: opt.ID,
+			TradeID:  trade.tradeID,
+			Win:      win,
+			Profit:   profit,
+			ClosedAt: time.Unix(opt.ClosedAt, 0),
+		})
 	}
 }
 
