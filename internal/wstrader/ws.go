@@ -83,6 +83,7 @@ func (t *Trader) routeByName(name string, msg json.RawMessage) {
 
 	case "option-closed", "socket-option-closed":
 		// Final result - process win/loss
+		t.logger.Debug().RawJSON("raw_closed", msg).Msg("← option-closed raw")
 		t.handleOptionPush(msg)
 
 	case "option-changed", "option-archived":

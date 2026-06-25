@@ -143,8 +143,9 @@ func (b *Bot) handleMessage(ctx context.Context, message string) error {
 	b.logger.Info().Str("raw_signal", signal.Raw).Msg("📝 raw signal text")
 	b.logger.Info().Msg("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
-	// Deduplicate: same asset+direction+entryWindow within 3 minutes = duplicate
-	dedupKey := fmt.Sprintf("%s_%s_%s", signal.Asset, signal.Direction, signal.EntryWindow.Format("15:04"))
+	// Deduplicate: same asset+entryWindow within 3 minutes = duplicate signal
+	// Ignore direction - channel sends same signal multiple times with different directions
+	dedupKey := fmt.Sprintf("%s_%s", signal.Asset, signal.EntryWindow.Format("15:04"))
 	b.recentSignalsMu.Lock()
 	if lastSeen, exists := b.recentSignals[dedupKey]; exists && time.Since(lastSeen) < 3*time.Minute {
 		b.recentSignalsMu.Unlock()
