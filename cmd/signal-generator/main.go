@@ -57,10 +57,15 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// We need to connect but NOT listen to messages (we're the sender)
-	if err := tg.Connect(ctx); err != nil {
-		log.Fatalf("Failed to connect to Telegram: %v", err)
-	}
+	// Run Telegram client in background
+	go func() {
+		if err := tg.Connect(ctx); err != nil && err != context.Canceled {
+			logger.Error().Err(err).Msg("Telegram connection error")
+		}
+	}()
+
+	// Give Telegram time to connect
+	time.Sleep(2 * time.Second)
 
 	// Create analyzer
 	analyzerCfg := analyzer.DefaultConfig()
