@@ -102,23 +102,17 @@ func (t *Trader) routeByName(name string, msg json.RawMessage) {
 func (t *Trader) handleOptionPush(msg json.RawMessage) {
 	var opt struct {
 		ID        int64   `json:"id"`
-		Type      string  `json:"type"`
-		Price     float64 `json:"price"`      // amount staked (cents)
-		WinAmount float64 `json:"win_amount"` // non-zero on WIN
-		Profit    float64 `json:"profit"`     // net profit (cents), negative on loss
-		Status    string  `json:"status"`     // "win" / "loose" / "equal"
-		ClosedAt  int64   `json:"exp"`        // expiry timestamp
+		Win       string  `json:"win"`        // "win" or "loose" (empty on open)
+		Amount    float64 `json:"amount"`     // stake in micro-units (÷1,000,000)
+		WinAmount float64 `json:"win_amount"` // total return in micro-units
 	}
 
 	if err := json.Unmarshal(msg, &opt); err != nil || opt.ID == 0 {
 		return
 	}
 
-	// Log raw for debugging unknown field names
-	t.logger.Debug().RawJSON("option_push", msg).Int64("id", opt.ID).Str("status", opt.Status).Msg("← option push")
-
-	// Only handle closed options (status present)
-	if opt.Status == "" {
+	// Only process when result is determined
+	if opt.Win == "" {
 		return
 	}
 
@@ -129,20 +123,29 @@ func (t *Trader) handleOptionPush(msg json.RawMessage) {
 	}
 	t.openTradesMu.Unlock()
 
-	win := opt.Status == "win"
-	profit := opt.Profit / 100.0 // convert cents to dollars
-	if !win {
-		profit = -(opt.Price / 100.0) // loss = full stake
+	if !exists {
+		return // not our trade
+	}
+
+	win := opt.Win == "win"
+	stake := opt.Amount / 1_000_000
+
+	var profit float64
+	if win {
+		profit = (opt.WinAmount / 1_000_000) - stake
+	} else {
+		profit = -stake
 	}
 
 	resultStr := "LOSS ❌"
 	if win {
-		resultStr = "WIN ✅"
+		resultStr = "WIN  ✅"
 	}
 
 	t.logger.Info().
 		Int64("option_id", opt.ID).
 		Str("result", resultStr).
+		Float64("stake", stake).
 		Float64("profit", profit).
 		Msg("🏁 Trade result received")
 
@@ -152,7 +155,7 @@ func (t *Trader) handleOptionPush(msg json.RawMessage) {
 			TradeID:  trade.tradeID,
 			Win:      win,
 			Profit:   profit,
-			ClosedAt: time.Unix(opt.ClosedAt, 0),
+			ClosedAt: time.Now(),
 		})
 	}
 }
