@@ -497,3 +497,94 @@ func (a terminalAuth) AcceptTermsOfService(_ context.Context, tos tg.HelpTermsOf
 func (a terminalAuth) SignUp(_ context.Context) (auth.UserInfo, error) {
 	return auth.UserInfo{}, fmt.Errorf("signup not supported")
 }
+
+
+// Connect connects to Telegram without listening (for sending messages only)
+func (c *Client) Connect(ctx context.Context) error {
+	c.logger.Info().Msg("initializing telegram connection...")
+
+	if err := os.MkdirAll(filepath.Dir(c.cfg.SessionFile), 0755); err != nil {
+		return fmt.Errorf("create session dir: %w", err)
+	}
+
+	c.client = telegram.NewClient(c.cfg.ApiID, c.cfg.ApiHash, telegram.Options{
+		SessionStorage: &telegram.FileSessionStorage{
+			Path: c.cfg.SessionFile,
+		},
+	})
+
+	return c.client.Run(ctx, func(ctx context.Context) error {
+		c.logger.Info().Msg("connecting to telegram servers...")
+		c.api = c.client.API()
+
+		c.logger.Debug().Msg("telegram API client initialized")
+		c.logger.Info().Msg("checking authentication status...")
+
+		status, err := c.client.Auth().Status(ctx)
+		if err != nil {
+			return fmt.Errorf("auth status: %w", err)
+		}
+
+		if !status.Authorized {
+			c.logger.Info().Msg("not authorized, starting phone authentication...")
+			// Phone authentication flow would go here
+			// For now, return error asking user to run the bot first
+			return fmt.Errorf("not authorized - please run the bot first to authenticate")
+		}
+
+		c.logger.Info().Msg("already authorized (using saved session)")
+		c.logger.Info().Msg("✓ telegram client connected and ready")
+
+		// Keep connection alive
+		<-ctx.Done()
+		return ctx.Err()
+	})
+}
+
+// SendMessage sends a text message to a channel
+func (c *Client) SendMessage(ctx context.Context, channelID int64, message string) error {
+	if c.api == nil {
+		return fmt.Errorf("telegram client not connected")
+	}
+
+	// Resolve channel
+	inputPeer := &tg.InputPeerChannel{
+		ChannelID: channelID,
+	}
+
+	// Get full channel info to get access hash
+	channels, err := c.api.ChannelsGetChannels(ctx, []tg.InputChannelClass{
+		&tg.InputChannel{ChannelID: channelID},
+	})
+	if err != nil {
+		return fmt.Errorf("get channel: %w", err)
+	}
+
+	chats := channels.GetChats()
+	if len(chats) == 0 {
+		return fmt.Errorf("channel not found")
+	}
+
+	channel, ok := chats[0].(*tg.Channel)
+	if !ok {
+		return fmt.Errorf("not a channel")
+	}
+
+	inputPeer.AccessHash = channel.AccessHash
+
+	// Send message
+	_, err = c.api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
+		Peer:    inputPeer,
+		Message: message,
+	})
+
+	if err != nil {
+		return fmt.Errorf("send message: %w", err)
+	}
+
+	c.logger.Info().
+		Int64("channel_id", channelID).
+		Msg("✓ Message sent to Telegram")
+
+	return nil
+}

@@ -1,0 +1,163 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/rs/zerolog"
+	"signal-bot/internal/analyzer"
+	"signal-bot/internal/config"
+	"signal-bot/internal/telegram"
+	"signal-bot/internal/wstrader"
+	"signal-bot/pkg/models"
+)
+
+var (
+	configPath = flag.String("config", "configs/config.yaml", "Path to config file")
+	interval   = flag.Int("interval", 60, "Analysis interval in seconds")
+	assets     = flag.String("assets", "EURUSD,GBPUSD,AUDUSD,USDJPY", "Comma-separated list of assets to analyze")
+)
+
+func main() {
+	flag.Parse()
+
+	// Setup logger
+	logger := zerolog.New(zerolog.ConsoleWriter{
+		Out:        os.Stdout,
+		TimeFormat: "15:04:05",
+	}).With().Timestamp().Logger().Level(zerolog.InfoLevel)
+
+	logger.Info().Msg("═══════════════════════════════════════")
+	logger.Info().Msg("    AI SIGNAL GENERATOR")
+	logger.Info().Msg("═══════════════════════════════════════")
+
+	// Load config
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Connect to IQ Option for market data
+	trader := wstrader.New(&cfg.IQOption, logger)
+	logger.Info().Msg("→ Connecting to IQ Option for market data...")
+	if err := trader.Connect(); err != nil {
+		log.Fatalf("Failed to connect to IQ Option: %v", err)
+	}
+	defer trader.Close()
+
+	// Connect to Telegram for posting signals
+	tg := telegram.New(&cfg.Telegram, logger)
+	logger.Info().Msg("→ Connecting to Telegram...")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// We need to connect but NOT listen to messages (we're the sender)
+	if err := tg.Connect(ctx); err != nil {
+		log.Fatalf("Failed to connect to Telegram: %v", err)
+	}
+
+	// Create analyzer
+	analyzerCfg := analyzer.DefaultConfig()
+	an := analyzer.New(trader, logger, analyzerCfg)
+
+	// Parse asset list
+	assetList := []string{"EURUSD", "GBPUSD", "AUDUSD", "USDJPY"}
+	logger.Info().Strs("assets", assetList).Int("interval_sec", *interval).Msg("✓ Signal generator ready")
+
+	logger.Info().Msg("═══════════════════════════════════════")
+	logger.Info().Msg("✓ GENERATOR ACTIVE")
+	logger.Info().Msg("═══════════════════════════════════════")
+
+	// Setup graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	ticker := time.NewTicker(time.Duration(*interval) * time.Second)
+	defer ticker.Stop()
+
+	// Run analysis loop
+	for {
+		select {
+		case <-ticker.C:
+			analyzeAndSendSignals(ctx, an, tg, assetList, logger, cfg.Telegram.ChannelID)
+
+		case <-sigChan:
+			logger.Info().Msg("Shutting down signal generator...")
+			return
+		}
+	}
+}
+
+func analyzeAndSendSignals(ctx context.Context, an *analyzer.SignalAnalyzer, tg *telegram.Client, assets []string, logger zerolog.Logger, channelID int64) {
+	logger.Info().Msg("─────────────────────────────────────")
+	logger.Info().Msg("🔍 Analyzing market conditions...")
+
+	for _, asset := range assets {
+		signal, err := an.AnalyzeAsset(asset)
+		if err != nil {
+			logger.Warn().Err(err).Str("asset", asset).Msg("Analysis failed")
+			continue
+		}
+
+		if signal == nil {
+			logger.Debug().Str("asset", asset).Msg("No signal (conditions not met)")
+			continue
+		}
+
+		// Format signal as Mexy-style message
+		message := formatSignalMessage(signal)
+
+		// Post to Telegram
+		if err := tg.SendMessage(ctx, channelID, message); err != nil {
+			logger.Error().Err(err).Msg("Failed to send signal to Telegram")
+			continue
+		}
+
+		logger.Info().Str("asset", asset).Msg("✅ Signal posted to Telegram")
+	}
+}
+
+func formatSignalMessage(signal *models.Signal) string {
+	direction := "BUY"
+	if signal.Direction == models.DirectionPut {
+		direction = "SELL"
+	}
+
+	directionEmoji := "🟢"
+	if signal.Direction == models.DirectionPut {
+		directionEmoji = "🔴"
+	}
+
+	msg := fmt.Sprintf(`MEXY BINARY
+
+🚨 TRADE NOW!!
+
+📊 %s (OTC)
+🕒 Timeframe: %d-min expiry
+🤖 AI Confidence: %.0f%%
+🕰️ Entry Window: %s
+Direction: %s %s`,
+		signal.Asset,
+		signal.Expiry,
+		signal.Confidence*100,
+		signal.EntryWindow.Format("3:04 PM"),
+		directionEmoji,
+		direction,
+	)
+
+	// Add martingale levels if present
+	if len(signal.MartingaleLevels) > 0 {
+		msg += "\n\n📊 Martingale Levels:"
+		for _, ml := range signal.MartingaleLevels {
+			msg += fmt.Sprintf("\n• Level %d → %s", ml.Level, ml.Time.Format("3:04 PM"))
+		}
+	}
+
+	return msg
+}
