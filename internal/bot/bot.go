@@ -470,6 +470,13 @@ func (b *Bot) handleTradeResult(result wstrader.TradeResult) {
 }
 
 func (b *Bot) tryMartingale(result wstrader.TradeResult) {
+	// Recover from any panic to prevent bot crash
+	defer func() {
+		if r := recover(); r != nil {
+			b.logger.Error().Interface("panic", r).Msg("panic in tryMartingale - recovered")
+		}
+	}()
+
 	signal := result.Signal
 	if signal == nil || len(signal.MartingaleLevels) == 0 {
 		return
@@ -500,8 +507,8 @@ func (b *Bot) tryMartingale(result wstrader.TradeResult) {
 			Int("level", ml.Level).
 			Str("entry_time", ml.Time.Format("15:04:05")).
 			Float64("amount", newAmount).
-			Str("wait", waitFor.Round(time.Second).String()).
-			Msg("🔁 Martingale: scheduling re-entry on loss")
+			Int64("wait_sec", int64(waitFor.Seconds())).
+			Msg("Martingale: scheduling re-entry on loss")
 
 		// Create a new signal clone with updated amount and entry window
 		martingaleSignal := *signal // copy
