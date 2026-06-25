@@ -492,12 +492,15 @@ func (b *Bot) tryMartingale(result wstrader.TradeResult) {
 		// Double the amount for each martingale level
 		newAmount := result.Amount * float64(int(1)<<i) * 2
 		waitFor := time.Until(ml.Time)
+		if waitFor < 0 {
+			waitFor = 0
+		}
 
 		b.logger.Info().
 			Int("level", ml.Level).
 			Str("entry_time", ml.Time.Format("15:04:05")).
 			Float64("amount", newAmount).
-			Dur("wait", waitFor.Round(time.Second)).
+			Str("wait", waitFor.Round(time.Second).String()).
 			Msg("🔁 Martingale: scheduling re-entry on loss")
 
 		// Create a new signal clone with updated amount and entry window
@@ -505,8 +508,12 @@ func (b *Bot) tryMartingale(result wstrader.TradeResult) {
 		martingaleSignal.ID = uuid.New().String()
 		martingaleSignal.EntryWindow = ml.Time
 		martingaleSignal.Amount = newAmount
-		// Remove levels already used
-		martingaleSignal.MartingaleLevels = signal.MartingaleLevels[i+1:]
+		// Pass remaining levels (safe slice)
+		if i+1 < len(signal.MartingaleLevels) {
+			martingaleSignal.MartingaleLevels = signal.MartingaleLevels[i+1:]
+		} else {
+			martingaleSignal.MartingaleLevels = nil
+		}
 
 		if err := b.queue.Push(&martingaleSignal); err != nil {
 			b.logger.Error().Err(err).Int("level", ml.Level).Msg("failed to queue martingale signal")
