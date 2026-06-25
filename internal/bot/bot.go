@@ -44,17 +44,26 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Bot, error) {
 		return nil, fmt.Errorf("init database: %w", err)
 	}
 
+	// Load today's stats from DB so risk limits account for existing trades
+	stats := &DailyStats{LastReset: time.Now()}
+	if todayStats, err := db.GetTodayStats(); err == nil {
+		stats.TradesCount = todayStats.Total
+		stats.TotalLoss = todayStats.TotalProfit // already summed as loss amount
+		logger.Info().
+			Int("trades_today", stats.TradesCount).
+			Float64("loss_today", stats.TotalLoss).
+			Msg("📊 Loaded today's existing trade stats from database")
+	}
+
 	return &Bot{
-		cfg:      cfg,
-		tg:       telegram.New(&cfg.Telegram, logger),
-		trader:   wstrader.New(&cfg.IQOption, logger),
-		parser:   parser.New(),
-		queue:    queue.New(100),
-		db:       db,
-		logger:   logger,
-		dailyStats: &DailyStats{
-			LastReset: time.Now(),
-		},
+		cfg:        cfg,
+		tg:         telegram.New(&cfg.Telegram, logger),
+		trader:     wstrader.New(&cfg.IQOption, logger),
+		parser:     parser.New(),
+		queue:      queue.New(100),
+		db:         db,
+		logger:     logger,
+		dailyStats: stats,
 	}, nil
 }
 
@@ -174,12 +183,13 @@ func (b *Bot) shouldTrade(signal *models.Signal) bool {
 	b.dailyStats.mu.RLock()
 	defer b.dailyStats.mu.RUnlock()
 
-	// Reset daily stats if new day
-	if time.Since(b.dailyStats.LastReset) > 24*time.Hour {
+	// Reset daily stats if it's a new calendar day
+	now := time.Now()
+	if b.dailyStats.LastReset.Day() != now.Day() || b.dailyStats.LastReset.Month() != now.Month() {
 		b.logger.Info().Msg("  resetting daily statistics (new day)")
 		b.dailyStats.TradesCount = 0
 		b.dailyStats.TotalLoss = 0
-		b.dailyStats.LastReset = time.Now()
+		b.dailyStats.LastReset = now
 	}
 
 	// Check daily loss limit

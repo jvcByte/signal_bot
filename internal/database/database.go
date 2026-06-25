@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"signal-bot/pkg/models"
@@ -153,34 +152,26 @@ func (d *Database) UpdateTrade(trade *models.Trade) error {
 	return err
 }
 
-func (d *Database) GetTradeStats(since time.Time) (*TradeStats, error) {
+func (d *Database) GetTodayStats() (*TradeStats, error) {
 	query := `
 		SELECT 
 			COUNT(*) as total,
-			SUM(CASE WHEN result = 'WIN' THEN 1 ELSE 0 END) as wins,
-			SUM(CASE WHEN result = 'LOSE' THEN 1 ELSE 0 END) as losses,
-			SUM(profit) as total_profit
+			COALESCE(SUM(CASE WHEN result = 'WIN' THEN 1 ELSE 0 END), 0) as wins,
+			COALESCE(SUM(CASE WHEN result = 'LOSE' THEN 1 ELSE 0 END), 0) as losses,
+			COALESCE(SUM(CASE WHEN profit < 0 THEN ABS(profit) ELSE 0 END), 0) as total_loss
 		FROM trades
-		WHERE placed_at >= ?
+		WHERE DATE(placed_at) = DATE('now')
+		  AND status != 'FAILED'
 	`
 
 	var stats TradeStats
-	err := d.db.QueryRow(query, since).Scan(
+	err := d.db.QueryRow(query).Scan(
 		&stats.Total,
 		&stats.Wins,
 		&stats.Losses,
 		&stats.TotalProfit,
 	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if stats.Total > 0 {
-		stats.WinRate = float64(stats.Wins) / float64(stats.Total)
-	}
-
-	return &stats, nil
+	return &stats, err
 }
 
 func (d *Database) Close() error {
