@@ -82,8 +82,6 @@ func (t *Trader) routeByName(name string, msg json.RawMessage) {
 		// Trade open confirmation - ignore (no result yet)
 
 	case "option-closed", "socket-option-closed":
-		// Final result - process win/loss
-		t.logger.Debug().RawJSON("raw_closed", msg).Msg("← option-closed raw")
 		t.handleOptionPush(msg)
 
 	case "option-changed", "option-archived":
@@ -97,30 +95,46 @@ func (t *Trader) routeByName(name string, msg json.RawMessage) {
 	}
 }
 
-// handleOptionPush processes option result pushes from IQ Option
+// handleOptionPush processes option result pushes from IQ Option.
+// Two different message formats arrive - we handle both.
 func (t *Trader) handleOptionPush(msg json.RawMessage) {
-	var opt struct {
-		ID        int64   `json:"id"`
-		Win       string  `json:"win"`        // "win" or "loose" (empty on open)
-		Amount    float64 `json:"amount"`     // stake in micro-units (÷1,000,000)
-		WinAmount float64 `json:"win_amount"` // total return in micro-units
+	// Try format 2: socket-option-closed (win field, amount in micro-units)
+	var f2 struct {
+		ID        int64  `json:"id"`
+		OptionID  int64  `json:"option_id"` // format 1 fallback
+		Win       string `json:"win"`        // "win" or "loose"
+		Result    string `json:"result"`     // format 1: "win" or "loose"
+		Amount    int64  `json:"amount"`     // micro-units in format 2, dollars in format 1
+		WinAmount string `json:"win_amount"` // string in format 2
+		Stake     float64 `json:"enrolled_amount"` // format 1 stake in dollars
 	}
 
-	if err := json.Unmarshal(msg, &opt); err != nil || opt.ID == 0 {
+	if err := json.Unmarshal(msg, &f2); err != nil {
 		return
 	}
 
-	t.logger.Debug().Int64("id", opt.ID).Str("win", opt.Win).Float64("amount", opt.Amount).Float64("win_amount", opt.WinAmount).Msg("← option-closed parsed")
-
-	// Only process when result is determined
-	if opt.Win == "" {
+	// Determine option ID
+	optionID := f2.ID
+	if optionID == 0 {
+		optionID = f2.OptionID
+	}
+	if optionID == 0 {
 		return
+	}
+
+	// Determine result
+	result := f2.Win
+	if result == "" {
+		result = f2.Result
+	}
+	if result == "" {
+		return // no result yet (trade still open)
 	}
 
 	t.openTradesMu.Lock()
-	trade, exists := t.openTrades[opt.ID]
+	trade, exists := t.openTrades[optionID]
 	if exists {
-		delete(t.openTrades, opt.ID)
+		delete(t.openTrades, optionID)
 	}
 	t.openTradesMu.Unlock()
 
@@ -128,12 +142,30 @@ func (t *Trader) handleOptionPush(msg json.RawMessage) {
 		return // not our trade
 	}
 
-	win := opt.Win == "win"
-	stake := opt.Amount / 1_000_000
+	win := result == "win"
+
+	// Calculate profit
+	// Format 2: amount is micro-units
+	// Format 1: amount is dollars directly
+	var stake float64
+	if f2.Amount > 1000 {
+		stake = float64(f2.Amount) / 1_000_000
+	} else if f2.Stake > 0 {
+		stake = f2.Stake
+	} else {
+		stake = trade.amount
+	}
 
 	var profit float64
 	if win {
-		profit = (opt.WinAmount / 1_000_000) - stake
+		// Parse win_amount (string in format 2)
+		var winAmt float64
+		fmt.Sscanf(f2.WinAmount, "%f", &winAmt)
+		if winAmt > 0 {
+			profit = winAmt - stake
+		} else {
+			profit = stake * 0.86 // fallback: 86% payout
+		}
 	} else {
 		profit = -stake
 	}
@@ -144,7 +176,7 @@ func (t *Trader) handleOptionPush(msg json.RawMessage) {
 	}
 
 	t.logger.Info().
-		Int64("option_id", opt.ID).
+		Int64("option_id", optionID).
 		Str("result", resultStr).
 		Float64("stake", stake).
 		Float64("profit", profit).
@@ -152,7 +184,7 @@ func (t *Trader) handleOptionPush(msg json.RawMessage) {
 
 	if t.onResult != nil {
 		t.onResult(TradeResult{
-			OptionID: opt.ID,
+			OptionID: optionID,
 			TradeID:  trade.tradeID,
 			Win:      win,
 			Profit:   profit,
