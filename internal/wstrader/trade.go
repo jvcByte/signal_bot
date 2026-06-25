@@ -95,7 +95,7 @@ func (t *Trader) GetBalance() (float64, error) {
 
 	for _, b := range t.balances {
 		if b.Type == targetType {
-			return b.realAmount(), nil
+			return b.Amount, nil
 		}
 	}
 	return 0, fmt.Errorf("balance not found for account type %d", targetType)
@@ -131,7 +131,7 @@ func (t *Trader) getBalanceID() (int64, error) {
 	t.logger.Debug().Int("target_type", targetType).Int("balance_count", len(balances)).Msg("looking for balance ID")
 
 	for _, b := range balances {
-		t.logger.Debug().Int64("id", b.ID).Int("type", b.Type).Float64("amount", b.realAmount()).Msg("checking balance")
+		t.logger.Debug().Int64("id", b.ID).Int("type", b.Type).Float64("amount", b.Amount).Msg("checking balance")
 		if b.Type == targetType {
 			return b.ID, nil
 		}
@@ -191,11 +191,16 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 		direction = "put"
 	}
 
-	// option_type_id: 3 = turbo (expiry 1-5 min), 1 = binary (expiry 5+ min)
-	optionTypeID := 3 // turbo
-	if signal.Expiry > 5 {
-		optionTypeID = 1 // binary
-	}
+	// For turbo options, `expired` is the Unix timestamp of the candle close.
+	// Calculate the next candle boundary that gives us enough time to enter.
+	// IQ Option closes the purchase window ~30 seconds before candle close.
+	// Formula: find the next N-minute boundary from now + buffer.
+	expiryTimestamp := calcExpiryTimestamp(signal.Expiry)
+
+	t.logger.Info().
+		Int64("expiry_ts", expiryTimestamp).
+		Str("expiry_time", time.Unix(expiryTimestamp, 0).Format("15:04:05")).
+		Msg("⏰ Calculated expiry timestamp")
 
 	type openOptionMsg struct {
 		Name    string      `json:"name"`
@@ -208,7 +213,7 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 		ActiveID      int     `json:"active_id"`
 		OptionTypeID  int     `json:"option_type_id"`
 		Direction     string  `json:"direction"`
-		Expired       int     `json:"expired"`
+		Expired       int64   `json:"expired"`
 		Price         float64 `json:"price"`
 	}
 
@@ -218,9 +223,9 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 		Body: optionBody{
 			UserBalanceID: balanceID,
 			ActiveID:      activeID,
-			OptionTypeID:  optionTypeID,
+			OptionTypeID:  3, // turbo option (1-5 min)
 			Direction:     direction,
-			Expired:       signal.Expiry,
+			Expired:       expiryTimestamp,
 			Price:         amount,
 		},
 	}
@@ -281,4 +286,30 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 		Msg("✅ Trade placed successfully!")
 
 	return trade, nil
+}
+
+// calcExpiryTimestamp returns the Unix timestamp for the next candle close
+// that gives at least 30 seconds of purchase window remaining.
+// IQ Option's turbo `expired` field must be a candle-boundary timestamp.
+//
+// For a 2-minute expiry:
+//   now=12:47:10 → next 2-min boundary is 12:48:00 → but that's only 50s away
+//   if < 30s buffer remains before the boundary, use the NEXT one (12:50:00)
+func calcExpiryTimestamp(expiryMinutes int) int64 {
+	now := time.Now()
+	periodSec := int64(expiryMinutes * 60)
+	bufferSec := int64(30) // IQ Option requires ~30s before candle close
+
+	// Find the next candle boundary
+	nowUnix := now.Unix()
+	// Round up to the next period boundary
+	nextBoundary := (nowUnix/periodSec+1)*periodSec
+
+	// If we have less than buffer time before that boundary, use the one after
+	timeToNext := nextBoundary - nowUnix
+	if timeToNext < bufferSec {
+		nextBoundary += periodSec
+	}
+
+	return nextBoundary
 }

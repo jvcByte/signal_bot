@@ -180,7 +180,7 @@ func (t *Trader) loadProfile() error {
 		}
 		t.logger.Info().
 			Str("type", label).
-			Float64("amount", b.realAmount()).
+			Float64("amount", b.Amount).
 			Str("currency", b.Currency).
 			Int64("id", b.ID).
 			Msg("💰 Balance loaded")
