@@ -1,35 +1,17 @@
 telegram:
-  api_id: 12345678
+  api_id: 12345678                    # Get from https://my.telegram.org
   api_hash: "your_api_hash_here"
   phone: "+1234567890"
-  channel_id: -1003488226342
+  channel_id: -1003488226342          # Signal channel ID
   session_file: "session/telegram.session"
 
 iqoption:
   email: "your_email@example.com"
   password: "your_password"
-  demo_mode: true
-  base_url: "https://iqoption.com/traderoom"
-  headless: false  # Keep false to see the browser and calibrate coordinates
-  cookies_file: "session/iqoption_cookies.json"
-  
-  # Canvas UI Coordinates (IQ Option uses canvas, not HTML elements)
-  # To calibrate: Run bot, take screenshot, use image editor to find pixel coordinates
-  # Default values for 1280x800 resolution - YOU MUST CALIBRATE THESE!
-  coordinates:
-    asset_x: 150    # Click here to open asset selector
-    asset_y: 50     # Then type asset name and press Enter
-    expiry_x: 300   # Click here to open expiry dropdown
-    expiry_y: 100   # (Or pre-select expiry manually before running bot)
-    amount_x: 640   # Click here to focus amount input field
-    amount_y: 400   # Then type amount value
-    call_x: 500     # Click here for CALL/BUY (green up button)
-    call_y: 650
-    put_x: 780      # Click here for PUT/SELL (red down button)
-    put_y: 650
+  demo_mode: true                     # Always start with demo!
 
 trading:
-  default_amount: 10.0
+  default_amount: 2.0                 # Trade amount per signal
   max_concurrent_trades: 3
   min_balance: 100.0
   trade_delay_ms: 2000
@@ -37,11 +19,11 @@ trading:
 
 risk:
   enabled: true
-  max_trades_per_hour: 10
-  min_signal_confidence: 0.7
+  max_trades_per_hour: 30
+  min_signal_confidence: 0.7          # Minimum AI confidence (0.0-1.0)
 
 logging:
-  level: "info"
+  level: "info"                       # debug / info / warn / error
   file: "logs/bot.log"
   console: true
 
