@@ -308,13 +308,22 @@ func (b *Bot) tradeWorker(ctx context.Context, workerID int) {
 			now := time.Now()
 			waitDuration := time.Until(signal.EntryWindow)
 
-			if waitDuration > 2*time.Minute {
-				// Entry window too far in the future or already passed
+			if waitDuration > 5*time.Minute {
+				// Entry window too far in the future
 				b.logger.Warn().
 					Int("worker_id", workerID).
 					Str("entry_window", signal.EntryWindow.Format("15:04:05")).
 					Dur("wait", waitDuration).
-					Msg("⛔ Entry window too far away or expired, skipping signal")
+					Msg("⛔ Entry window too far away, skipping signal")
+				continue
+			}
+
+			if waitDuration < -2*time.Minute {
+				// Entry window already passed by more than 2 minutes
+				b.logger.Warn().
+					Int("worker_id", workerID).
+					Str("entry_window", signal.EntryWindow.Format("15:04:05")).
+					Msg("⛔ Entry window already expired, skipping signal")
 				continue
 			}
 
