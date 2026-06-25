@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -470,14 +471,21 @@ func (b *Bot) handleTradeResult(result wstrader.TradeResult) {
 }
 
 func (b *Bot) tryMartingale(result wstrader.TradeResult) {
-	// Recover from any panic to prevent bot crash
 	defer func() {
 		if r := recover(); r != nil {
-			b.logger.Error().Interface("panic", r).Msg("panic in tryMartingale - recovered")
+			fmt.Fprintf(os.Stderr, "[ERROR] panic in tryMartingale: %v\n", r)
 		}
 	}()
 
 	signal := result.Signal
+	if signal == nil || len(signal.MartingaleLevels) == 0 {
+		return
+	}
+
+	b.logger.Debug().
+		Int("levels", len(signal.MartingaleLevels)).
+		Float64("amount", result.Amount).
+		Msg("tryMartingale: checking levels")
 	if signal == nil || len(signal.MartingaleLevels) == 0 {
 		return
 	}
