@@ -207,7 +207,7 @@ func (b *Bot) shouldTrade(signal *models.Signal) bool {
 	b.dailyStats.mu.RLock()
 	defer b.dailyStats.mu.RUnlock()
 
-	// Reset daily stats if it's a new calendar day
+	// Reset daily stats if new calendar day
 	now := time.Now()
 	if b.dailyStats.LastReset.Day() != now.Day() || b.dailyStats.LastReset.Month() != now.Month() {
 		b.logger.Info().Msg("  resetting daily statistics (new day)")
@@ -216,29 +216,16 @@ func (b *Bot) shouldTrade(signal *models.Signal) bool {
 		b.dailyStats.LastReset = now
 	}
 
-	// Check daily loss limit
-	b.logger.Debug().
-		Float64("current_loss", b.dailyStats.TotalLoss).
-		Float64("limit", b.cfg.Trading.MaxDailyLoss).
-		Msg("  checking daily loss limit")
-	if b.dailyStats.TotalLoss >= b.cfg.Trading.MaxDailyLoss {
-		b.logger.Warn().
-			Float64("loss", b.dailyStats.TotalLoss).
-			Float64("limit", b.cfg.Trading.MaxDailyLoss).
-			Msg("  ⛔ daily loss limit reached")
-		return false
-	}
-
-	// Check hourly trade limit
+	// Check daily trade limit (0 = unlimited)
 	b.logger.Debug().
 		Int("current_count", b.dailyStats.TradesCount).
-		Int("limit", b.cfg.Risk.MaxTradesPerHour).
-		Msg("  checking hourly trade limit")
-	if b.dailyStats.TradesCount >= b.cfg.Risk.MaxTradesPerHour {
+		Int("limit", b.cfg.Risk.MaxTradesPerDay).
+		Msg("  checking daily trade limit")
+	if b.cfg.Risk.MaxTradesPerDay > 0 && b.dailyStats.TradesCount >= b.cfg.Risk.MaxTradesPerDay {
 		b.logger.Warn().
 			Int("count", b.dailyStats.TradesCount).
-			Int("limit", b.cfg.Risk.MaxTradesPerHour).
-			Msg("  ⛔ hourly trade limit reached")
+			Int("limit", b.cfg.Risk.MaxTradesPerDay).
+			Msg("  ⛔ daily trade limit reached")
 		return false
 	}
 
