@@ -209,24 +209,30 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 	}
 
 	type optionBody struct {
-		UserBalanceID int64   `json:"user_balance_id"`
-		ActiveID      int     `json:"active_id"`
-		OptionTypeID  int     `json:"option_type_id"`
-		Direction     string  `json:"direction"`
-		Expired       int64   `json:"expired"`
-		Price         float64 `json:"price"`
+		UserBalanceID  int64   `json:"user_balance_id"`
+		ActiveID       int     `json:"active_id"`
+		OptionTypeID   int     `json:"option_type_id"`
+		Direction      string  `json:"direction"`
+		Expired        int64   `json:"expired"`
+		ExpirationSize int     `json:"expiration_size"`
+		Price          float64 `json:"price"`
+		RefundValue    int     `json:"refund_value"`
+		ProfitPercent  int     `json:"profit_percent"`
 	}
 
 	body := openOptionMsg{
 		Name:    "binary-options.open-option",
-		Version: "1.0",
+		Version: "2.0",
 		Body: optionBody{
-			UserBalanceID: balanceID,
-			ActiveID:      activeID,
-			OptionTypeID:  3, // turbo option (1-5 min)
-			Direction:     direction,
-			Expired:       expiryTimestamp,
-			Price:         amount,
+			UserBalanceID:  balanceID,
+			ActiveID:       activeID,
+			OptionTypeID:   12, // 12 = Blitz option
+			Direction:      direction,
+			Expired:        expiryTimestamp,
+			ExpirationSize: signal.Expiry * 60, // convert minutes to seconds
+			Price:          amount,
+			RefundValue:    0,
+			ProfitPercent:  87, // default payout %, IQ Option adjusts this dynamically
 		},
 	}
 
@@ -288,28 +294,10 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 	return trade, nil
 }
 
-// calcExpiryTimestamp returns the Unix timestamp for the next candle close
-// that gives at least 30 seconds of purchase window remaining.
-// IQ Option's turbo `expired` field must be a candle-boundary timestamp.
-//
-// For a 2-minute expiry:
-//   now=12:47:10 → next 2-min boundary is 12:48:00 → but that's only 50s away
-//   if < 30s buffer remains before the boundary, use the NEXT one (12:50:00)
+// calcExpiryTimestamp returns the Unix timestamp when the blitz option expires.
+// For blitz options, expired = now + expiration_size_in_seconds.
+// We add a small buffer so the trade lands within the purchase window.
 func calcExpiryTimestamp(expiryMinutes int) int64 {
-	now := time.Now()
-	periodSec := int64(expiryMinutes * 60)
-	bufferSec := int64(30) // IQ Option requires ~30s before candle close
-
-	// Find the next candle boundary
-	nowUnix := now.Unix()
-	// Round up to the next period boundary
-	nextBoundary := (nowUnix/periodSec+1)*periodSec
-
-	// If we have less than buffer time before that boundary, use the one after
-	timeToNext := nextBoundary - nowUnix
-	if timeToNext < bufferSec {
-		nextBoundary += periodSec
-	}
-
-	return nextBoundary
+	expirySeconds := int64(expiryMinutes * 60)
+	return time.Now().Unix() + expirySeconds
 }
