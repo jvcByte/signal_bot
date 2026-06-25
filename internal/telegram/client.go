@@ -35,7 +35,7 @@ func New(cfg *config.TelegramConfig, logger zerolog.Logger) *Client {
 
 func (c *Client) ConnectAndListen(ctx context.Context, handler MessageHandler) error {
 	c.logger.Info().Msg("initializing telegram connection...")
-	
+
 	if err := os.MkdirAll(filepath.Dir(c.cfg.SessionFile), 0755); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
 	}
@@ -51,40 +51,68 @@ func (c *Client) ConnectAndListen(ctx context.Context, handler MessageHandler) e
 			Path: c.cfg.SessionFile,
 		},
 	})
-	
-	// Store handler
+
 	c.handler = handler
 
 	c.logger.Info().Msg("connecting to telegram servers...")
 
-	return c.client.Run(ctx, func(ctx context.Context) error {
-		c.api = c.client.API()
-		c.logger.Debug().Msg("telegram API client initialized")
-		
-		c.logger.Info().Msg("checking authentication status...")
-		status, err := c.client.Auth().Status(ctx)
-		if err != nil {
-			return fmt.Errorf("get auth status: %w", err)
-		}
+	backoff := []time.Duration{5 * time.Second, 10 * time.Second, 30 * time.Second, 60 * time.Second}
 
-		if !status.Authorized {
-			c.logger.Warn().Msg("not authorized, starting authentication flow")
-			if err := c.authenticate(ctx); err != nil {
-				return fmt.Errorf("authenticate: %w", err)
+	for {
+		err := c.client.Run(ctx, func(ctx context.Context) error {
+
+			c.logger.Info().Msg("checking authentication status...")
+			status, err := c.client.Auth().Status(ctx)
+			if err != nil {
+				return fmt.Errorf("get auth status: %w", err)
 			}
-			c.logger.Info().Msg("authentication successful")
-		} else {
-			c.logger.Info().Msg("already authorized (using saved session)")
+
+			if !status.Authorized {
+				c.logger.Warn().Msg("not authorized, starting authentication flow")
+				if err := c.authenticate(ctx); err != nil {
+					return fmt.Errorf("authenticate: %w", err)
+				}
+				c.logger.Info().Msg("authentication successful")
+			} else {
+				c.logger.Info().Msg("already authorized (using saved session)")
+			}
+
+			c.logger.Info().Msg("✓ telegram client connected and ready")
+			return c.pollMessages(ctx)
+		})
+
+		if ctx.Err() != nil {
+			return ctx.Err() // context cancelled - clean shutdown
 		}
 
-		c.logger.Info().Msg("✓ telegram client connected and ready")
-		
-		// For channels, we need to POLL for messages instead of waiting for push updates
-		c.logger.Info().Int64("channel_id", c.cfg.ChannelID).Msg("starting message polling for channel")
-		c.logger.Info().Msg("💡 Using polling mode (channels don't push updates automatically)")
-		
-		return c.pollMessages(ctx)
-	})
+		if err != nil {
+			c.logger.Error().Err(err).Msg("telegram disconnected")
+		}
+
+		// Reconnect with backoff
+		attempt := 0
+		for {
+			idx := attempt
+			if idx >= len(backoff) {
+				idx = len(backoff) - 1
+			}
+			delay := backoff[idx]
+			c.logger.Info().Dur("wait", delay).Msg("🔄 Reconnecting to Telegram...")
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+
+			// Recreate client for fresh connection
+			c.client = telegram.NewClient(c.cfg.ApiID, c.cfg.ApiHash, telegram.Options{
+				SessionStorage: &telegram.FileSessionStorage{
+					Path: c.cfg.SessionFile,
+				},
+			})
+			break // try again in outer loop
+		}
+	}
 }
 
 func (c *Client) pollMessages(ctx context.Context) error {
@@ -390,13 +418,6 @@ func (c *Client) handleMessage(ctx context.Context, msg *tg.Message) error {
 	
 	// Call the handler with the message text
 	return c.handler(ctx, msg.Message)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 type terminalAuth struct {

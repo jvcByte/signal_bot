@@ -12,8 +12,19 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Connect logs in via HTTP, grabs SSID, then opens the WebSocket
+// Connect logs in via HTTP, grabs SSID, then opens the WebSocket.
+// Starts a background goroutine that auto-reconnects on disconnect.
 func (t *Trader) Connect() error {
+	if err := t.connectOnce(); err != nil {
+		return err
+	}
+	// Start reconnect supervisor
+	go t.reconnectLoop()
+	return nil
+}
+
+// connectOnce performs a single connect attempt
+func (t *Trader) connectOnce() error {
 	t.logger.Info().Msg("🔐 Logging in to IQ Option via HTTP...")
 	if err := t.httpLogin(); err != nil {
 		return fmt.Errorf("http login: %w", err)
@@ -26,8 +37,11 @@ func (t *Trader) Connect() error {
 	}
 	t.logger.Info().Msg("✓ WebSocket connected")
 
+	// Reset done channel for new connection
+	t.done = make(chan struct{})
+
 	go t.readLoop()
-	go t.heartbeatLoop() // keep connection alive
+	go t.heartbeatLoop()
 
 	if err := t.wsAuth(); err != nil {
 		return fmt.Errorf("ws auth: %w", err)
@@ -40,6 +54,35 @@ func (t *Trader) Connect() error {
 
 	t.logger.Info().Msg("✅ IQ Option WebSocket trader ready")
 	return nil
+}
+
+// reconnectLoop watches for disconnection and reconnects with backoff
+func (t *Trader) reconnectLoop() {
+	backoff := []time.Duration{3 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second, 60 * time.Second}
+	attempt := 0
+
+	for {
+		// Wait for current connection to drop
+		<-t.done
+
+		t.logger.Warn().Msg("⚠️  WebSocket disconnected - reconnecting...")
+
+		for {
+			delay := backoff[min(attempt, len(backoff)-1)]
+			t.logger.Info().Dur("wait", delay).Int("attempt", attempt+1).Msg("🔄 Reconnect attempt...")
+			time.Sleep(delay)
+
+			if err := t.connectOnce(); err != nil {
+				t.logger.Error().Err(err).Msg("reconnect failed, will retry")
+				attempt++
+				continue
+			}
+
+			t.logger.Info().Msg("✅ Reconnected to IQ Option WebSocket")
+			attempt = 0 // reset backoff on success
+			break
+		}
+	}
 }
 
 func (t *Trader) httpLogin() error {
