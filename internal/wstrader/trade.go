@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"signal-bot/pkg/models"
 )
 
@@ -138,8 +139,8 @@ func (t *Trader) getBalanceID() (int64, error) {
 // PlaceTrade places a binary/turbo option trade via WebSocket
 func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trade, error) {
 	trade := &models.Trade{
-		ID:       signal.ID,
-		SignalID: signal.ID,
+		ID:        uuid.New().String(), // stable ID used for DB and result matching
+		SignalID:  signal.ID,
 		Asset:    signal.Asset,
 		Direction: signal.Direction,
 		Amount:   amount,

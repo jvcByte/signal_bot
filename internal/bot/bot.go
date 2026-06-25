@@ -343,7 +343,8 @@ func (b *Bot) tradeWorker(ctx context.Context, workerID int) {
 			continue
 		}
 
-		trade.ID = uuid.New().String()
+		// ID was already set inside PlaceTrade to match what's in openTrades
+		// Do NOT override it with a new UUID here
 		
 		b.logger.Info().
 			Int("worker_id", workerID).
