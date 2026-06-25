@@ -29,6 +29,10 @@ type Bot struct {
 
 	mu         sync.RWMutex
 	dailyStats *DailyStats
+
+	// dedup: track recently seen signal hashes to avoid trading duplicates
+	recentSignals   map[string]time.Time
+	recentSignalsMu sync.Mutex
 }
 
 type DailyStats struct {
@@ -56,14 +60,15 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Bot, error) {
 	}
 
 	return &Bot{
-		cfg:        cfg,
-		tg:         telegram.New(&cfg.Telegram, logger),
-		trader:     wstrader.New(&cfg.IQOption, logger),
-		parser:     parser.New(),
-		queue:      queue.New(100),
-		db:         db,
-		logger:     logger,
-		dailyStats: stats,
+		cfg:           cfg,
+		tg:            telegram.New(&cfg.Telegram, logger),
+		trader:        wstrader.New(&cfg.IQOption, logger),
+		parser:        parser.New(),
+		queue:         queue.New(100),
+		db:            db,
+		logger:        logger,
+		dailyStats:    stats,
+		recentSignals: make(map[string]time.Time),
 	}, nil
 }
 
@@ -137,6 +142,23 @@ func (b *Bot) handleMessage(ctx context.Context, message string) error {
 	}
 	b.logger.Info().Str("raw_signal", signal.Raw).Msg("📝 raw signal text")
 	b.logger.Info().Msg("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	// Deduplicate: same asset+direction+entryWindow within 3 minutes = duplicate
+	dedupKey := fmt.Sprintf("%s_%s_%s", signal.Asset, signal.Direction, signal.EntryWindow.Format("15:04"))
+	b.recentSignalsMu.Lock()
+	if lastSeen, exists := b.recentSignals[dedupKey]; exists && time.Since(lastSeen) < 3*time.Minute {
+		b.recentSignalsMu.Unlock()
+		b.logger.Debug().Str("key", dedupKey).Msg("⏭️  Duplicate signal ignored")
+		return nil
+	}
+	b.recentSignals[dedupKey] = time.Now()
+	// Clean up old entries
+	for k, t := range b.recentSignals {
+		if time.Since(t) > 5*time.Minute {
+			delete(b.recentSignals, k)
+		}
+	}
+	b.recentSignalsMu.Unlock()
 
 	b.logger.Debug().Msg("saving signal to database...")
 	if err := b.db.SaveSignal(signal); err != nil {

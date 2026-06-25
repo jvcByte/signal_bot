@@ -109,6 +109,8 @@ func (t *Trader) handleOptionPush(msg json.RawMessage) {
 		return
 	}
 
+	t.logger.Debug().Int64("id", opt.ID).Str("win", opt.Win).Float64("amount", opt.Amount).Float64("win_amount", opt.WinAmount).Msg("← option-closed parsed")
+
 	// Only process when result is determined
 	if opt.Win == "" {
 		return
