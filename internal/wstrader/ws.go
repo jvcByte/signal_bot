@@ -154,6 +154,8 @@ func (t *Trader) handleOptionPush(msg json.RawMessage) {
 			Win:      win,
 			Profit:   profit,
 			ClosedAt: time.Now(),
+			Signal:   trade.signal,
+			Amount:   stake,
 		})
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"signal-bot/internal/config"
+	"signal-bot/pkg/models"
 )
 
 const (
@@ -23,10 +24,12 @@ const (
 // TradeResult is delivered to the ResultHandler when a trade closes
 type TradeResult struct {
 	OptionID   int64
-	TradeID    string  // our internal DB trade ID
+	TradeID    string          // our internal DB trade ID
 	Win        bool
-	Profit     float64 // net profit (positive=win, negative=loss)
+	Profit     float64         // net profit (positive=win, negative=loss)
 	ClosedAt   time.Time
+	Signal     *models.Signal  // original signal (for martingale)
+	Amount     float64         // amount that was traded
 }
 
 // ResultHandler is called when a trade result is received
@@ -34,8 +37,9 @@ type ResultHandler func(result TradeResult)
 
 // openTrade tracks a pending trade waiting for its result
 type openTrade struct {
-	tradeID  string  // DB trade ID
-	amount   float64 // amount staked (for loss calculation)
+	tradeID string
+	amount  float64
+	signal  *models.Signal
 }
 
 // Trader communicates with IQ Option via WebSocket API

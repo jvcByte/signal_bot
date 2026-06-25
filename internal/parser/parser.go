@@ -38,8 +38,14 @@ func (p *Parser) Parse(text string) (*models.Signal, error) {
 	   (strings.Contains(strings.ToUpper(text), "TIMEFRAME") && strings.Contains(strings.ToUpper(text), "CONFIDENCE")) {
 		mexySignal, err := ParseMexyDetailed(text)
 		if err == nil {
-			// Copy EntryWindow into base signal so the bot can use it
 			mexySignal.Signal.EntryWindow = mexySignal.EntryWindow
+			// Copy martingale levels into base signal
+			for _, ml := range mexySignal.MartingaleLevels {
+				mexySignal.Signal.MartingaleLevels = append(mexySignal.Signal.MartingaleLevels, models.MartingaleTime{
+					Level: ml.Level,
+					Time:  ml.Time,
+				})
+			}
 			return mexySignal.Signal, nil
 		}
 	}

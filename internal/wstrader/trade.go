@@ -286,6 +286,7 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 	t.openTrades[optionID] = openTrade{
 		tradeID: trade.ID,
 		amount:  amount,
+		signal:  signal,
 	}
 	t.openTradesMu.Unlock()
 

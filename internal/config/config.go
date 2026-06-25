@@ -39,9 +39,11 @@ type TradingConfig struct {
 }
 
 type RiskConfig struct {
-	Enabled              bool    `yaml:"enabled"`
-	MaxTradesPerHour     int     `yaml:"max_trades_per_hour"`
-	MinSignalConfidence  float64 `yaml:"min_signal_confidence"`
+	Enabled             bool    `yaml:"enabled"`
+	MaxTradesPerHour    int     `yaml:"max_trades_per_hour"`
+	MinSignalConfidence float64 `yaml:"min_signal_confidence"`
+	Martingale          bool    `yaml:"martingale"`         // re-enter on loss
+	MartingaleMax       int     `yaml:"martingale_max"`     // max levels to follow (0 = all)
 }
 
 type LoggingConfig struct {

@@ -1,7 +1,3 @@
- Martingale support
-Mexy signals include martingale levels (Level 1 → 11:17 AM, Level 2 → 11:19 AM). If the first trade loses, the bot should re-enter at the next martingale level with a higher(twice the loss amount) amount.
-
-
 # Signal Trading Bot
 
 Automated trading bot that monitors Telegram channels for trading signals and executes trades on IQ Option via **WebSocket API** — no browser required, runs fully headless on any server.

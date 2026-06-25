@@ -327,14 +327,20 @@ func (b *Bot) tradeWorker(ctx context.Context, workerID int) {
 		}
 
 		// Place trade
+		// Use signal.Amount if set (martingale override), else use config default
+		tradeAmount := b.cfg.Trading.DefaultAmount
+		if signal.Amount > 0 {
+			tradeAmount = signal.Amount
+		}
+
 		b.logger.Info().
 			Int("worker_id", workerID).
 			Str("asset", signal.Asset).
 			Str("direction", signal.Direction.String()).
-			Float64("amount", b.cfg.Trading.DefaultAmount).
+			Float64("amount", tradeAmount).
 			Msg("🎯 EXECUTING TRADE...")
-			
-		trade, err := b.trader.PlaceTrade(signal, b.cfg.Trading.DefaultAmount)
+
+		trade, err := b.trader.PlaceTrade(signal, tradeAmount)
 		if err != nil {
 			b.logger.Error().
 				Int("worker_id", workerID).
@@ -412,10 +418,10 @@ func (b *Bot) handleTradeResult(result wstrader.TradeResult) {
 		b.logger.Error().Err(err).Str("trade_id", result.TradeID).Msg("failed to update trade result")
 	}
 
-	// Update daily P&L so loss limits work correctly
 	if !result.Win {
+		// Update daily P&L
 		b.dailyStats.mu.Lock()
-		b.dailyStats.TotalLoss += -result.Profit // profit is negative on loss
+		b.dailyStats.TotalLoss += -result.Profit
 		loss := b.dailyStats.TotalLoss
 		b.dailyStats.mu.Unlock()
 
@@ -423,21 +429,76 @@ func (b *Bot) handleTradeResult(result wstrader.TradeResult) {
 			Float64("daily_loss", loss).
 			Float64("limit", b.cfg.Trading.MaxDailyLoss).
 			Msg("📉 Loss recorded")
+
+		// Martingale: queue next level if enabled and levels remain
+		if b.cfg.Risk.Martingale && result.Signal != nil {
+			b.tryMartingale(result)
+		}
 	}
+}
+
+func (b *Bot) tryMartingale(result wstrader.TradeResult) {
+	signal := result.Signal
+	if signal == nil || len(signal.MartingaleLevels) == 0 {
+		return
+	}
+
+	now := time.Now()
+
+	for i, ml := range signal.MartingaleLevels {
+		// Skip levels beyond configured max
+		if b.cfg.Risk.MartingaleMax > 0 && ml.Level > b.cfg.Risk.MartingaleMax {
+			break
+		}
+
+		// Find the next level that hasn't passed yet
+		windowEnd := ml.Time.Add(2 * time.Minute)
+		if now.After(windowEnd) {
+			continue // this level already passed
+		}
+
+		// Double the amount for each martingale level
+		newAmount := result.Amount * float64(int(1)<<i) * 2
+		waitFor := time.Until(ml.Time)
+
+		b.logger.Info().
+			Int("level", ml.Level).
+			Str("entry_time", ml.Time.Format("15:04:05")).
+			Float64("amount", newAmount).
+			Dur("wait", waitFor.Round(time.Second)).
+			Msg("🔁 Martingale: scheduling re-entry on loss")
+
+		// Create a new signal clone with updated amount and entry window
+		martingaleSignal := *signal // copy
+		martingaleSignal.ID = uuid.New().String()
+		martingaleSignal.EntryWindow = ml.Time
+		martingaleSignal.Amount = newAmount
+		// Remove levels already used
+		martingaleSignal.MartingaleLevels = signal.MartingaleLevels[i+1:]
+
+		if err := b.queue.Push(&martingaleSignal); err != nil {
+			b.logger.Error().Err(err).Int("level", ml.Level).Msg("failed to queue martingale signal")
+		} else {
+			b.logger.Info().Int("level", ml.Level).Float64("amount", newAmount).Msg("✅ Martingale signal queued")
+		}
+		return // only queue the next level, not all of them
+	}
+
+	b.logger.Debug().Msg("no valid martingale levels remaining")
 }
 
 func (b *Bot) Stop() error {
 	b.logger.Info().Msg("stopping bot")
-	
+
 	b.queue.Close()
-	
+
 	if err := b.trader.Close(); err != nil {
 		b.logger.Error().Err(err).Msg("failed to close trader")
 	}
-	
+
 	if err := b.db.Close(); err != nil {
 		b.logger.Error().Err(err).Msg("failed to close database")
 	}
-	
+
 	return nil
 }
