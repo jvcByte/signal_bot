@@ -75,7 +75,7 @@ func (d *Database) migrate() error {
 
 func (d *Database) SaveSignal(signal *models.Signal) error {
 	query := `
-		INSERT INTO signals (id, asset, direction, expiry, amount, confidence, source, received_at, processed_at, raw)
+		INSERT OR REPLACE INTO signals (id, asset, direction, expiry, amount, confidence, source, received_at, processed_at, raw)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
