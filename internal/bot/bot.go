@@ -172,12 +172,13 @@ func (b *Bot) shouldTrade(signal *models.Signal) bool {
 	b.dailyStats.mu.RLock()
 	defer b.dailyStats.mu.RUnlock()
 
-	// Reset daily stats if new day
-	if time.Since(b.dailyStats.LastReset) > 24*time.Hour {
+	// Reset daily stats if new calendar day
+	now := time.Now()
+	if b.dailyStats.LastReset.Day() != now.Day() || b.dailyStats.LastReset.Month() != now.Month() {
 		b.logger.Info().Msg("  resetting daily statistics (new day)")
 		b.dailyStats.TradesCount = 0
 		b.dailyStats.TotalLoss = 0
-		b.dailyStats.LastReset = time.Now()
+		b.dailyStats.LastReset = now
 	}
 
 	// Check daily loss limit
@@ -193,16 +194,16 @@ func (b *Bot) shouldTrade(signal *models.Signal) bool {
 		return false
 	}
 
-	// Check hourly trade limit
+	// Check daily trade limit
 	b.logger.Debug().
 		Int("current_count", b.dailyStats.TradesCount).
-		Int("limit", b.cfg.Risk.MaxTradesPerHour).
-		Msg("  checking hourly trade limit")
-	if b.dailyStats.TradesCount >= b.cfg.Risk.MaxTradesPerHour {
+		Int("limit", b.cfg.Risk.MaxTradesPerDay).
+		Msg("  checking daily trade limit")
+	if b.cfg.Risk.MaxTradesPerDay > 0 && b.dailyStats.TradesCount >= b.cfg.Risk.MaxTradesPerDay {
 		b.logger.Warn().
 			Int("count", b.dailyStats.TradesCount).
-			Int("limit", b.cfg.Risk.MaxTradesPerHour).
-			Msg("  ⛔ hourly trade limit reached")
+			Int("limit", b.cfg.Risk.MaxTradesPerDay).
+			Msg("  ⛔ daily trade limit reached")
 		return false
 	}
 
@@ -274,13 +275,13 @@ func (b *Bot) tradeWorker(ctx context.Context, workerID int) {
 			now := time.Now()
 			waitDuration := time.Until(signal.EntryWindow)
 
-			if waitDuration > 2*time.Minute {
-				// Entry window too far in the future or already passed
+			if waitDuration > 5*time.Minute {
+				// Entry window too far in the future
 				b.logger.Warn().
 					Int("worker_id", workerID).
 					Str("entry_window", signal.EntryWindow.Format("15:04:05")).
 					Dur("wait", waitDuration).
-					Msg("⛔ Entry window too far away or expired, skipping signal")
+					Msg("⛔ Entry window too far away, skipping signal")
 				continue
 			}
 

@@ -37,7 +37,7 @@ trading:
 
 risk:
   enabled: true
-  max_trades_per_hour: 10
+  max_trades_per_day: 0     # 0 = unlimited, set to e.g. 50 to cap daily trades
   min_signal_confidence: 0.7
 
 logging:

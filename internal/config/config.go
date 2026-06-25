@@ -63,9 +63,9 @@ type TradingConfig struct {
 }
 
 type RiskConfig struct {
-	Enabled              bool    `yaml:"enabled"`
-	MaxTradesPerHour     int     `yaml:"max_trades_per_hour"`
-	MinSignalConfidence  float64 `yaml:"min_signal_confidence"`
+	Enabled             bool    `yaml:"enabled"`
+	MaxTradesPerDay     int     `yaml:"max_trades_per_day"`  // 0 = unlimited
+	MinSignalConfidence float64 `yaml:"min_signal_confidence"`
 }
 
 type LoggingConfig struct {
