@@ -63,24 +63,20 @@ var otcPairs = map[string]bool{
 }
 
 // resolveAssetID returns the active_id for a given asset.
-// OTC version is preferred (24/7). Only 9 pairs have OTC versions on IQ Option.
-// Non-OTC pairs are market-hours only and will fail outside trading hours.
-func resolveAssetID(asset string) (int, string, bool, bool) {
+// Tries OTC version first, falls back to regular market ID.
+func resolveAssetID(asset string) (int, string, bool) {
 	asset = strings.ToUpper(strings.TrimSpace(asset))
-	asset = strings.Replace(asset, "-OTC", "", 1) // normalize
+	asset = strings.Replace(asset, "-OTC", "", 1)
 
-	// Check if OTC version exists for this pair
 	if otcPairs[asset] {
 		if id, ok := assetIDs[asset+"-OTC"]; ok {
-			return id, asset + "-OTC", true, true // id, name, found, isOTC
+			return id, asset + "-OTC", true
 		}
 	}
-
-	// Fall back to regular market (may be closed outside trading hours)
 	if id, ok := assetIDs[asset]; ok {
-		return id, asset, true, false
+		return id, asset, true
 	}
-	return 0, "", false, false
+	return 0, "", false
 }
 
 // GetBalance returns the current balance for the configured account type
@@ -154,23 +150,16 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 	}
 
 	// Resolve asset ID - OTC preferred (24/7), falls back to regular market
-	activeID, resolvedAsset, ok, isOTC := resolveAssetID(signal.Asset)
+	activeID, resolvedAsset, ok := resolveAssetID(signal.Asset)
 	if !ok {
 		trade.Status = models.StatusFailed
 		trade.ErrorMsg = fmt.Sprintf("unknown asset: %s", signal.Asset)
 		return trade, fmt.Errorf("unknown asset %s - add to assetIDs map in trade.go", signal.Asset)
 	}
 
-	if !isOTC {
-		t.logger.Warn().
-			Str("asset", resolvedAsset).
-			Msg("⚠️  No OTC version for this pair - regular market may be closed outside trading hours")
-	}
-
 	t.logger.Info().
 		Str("requested", signal.Asset).
 		Str("resolved", resolvedAsset).
-		Bool("otc_24_7", isOTC).
 		Int("active_id", activeID).
 		Str("direction", string(signal.Direction)).
 		Int("expiry_min", signal.Expiry).
