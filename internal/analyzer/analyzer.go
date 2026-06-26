@@ -11,29 +11,37 @@ import (
 	"signal-bot/pkg/models"
 )
 
-// SignalAnalyzer generates trading signals from candle data
+// SignalAnalyzer generates trading signals from multi-factor analysis
 type SignalAnalyzer struct {
-	trader       *wstrader.Trader
-	logger       zerolog.Logger
-	config       AnalyzerConfig
-	lastSignals  map[string]time.Time // Track last signal time per asset
-	signalsMu    sync.RWMutex
+	trader      *wstrader.Trader
+	logger      zerolog.Logger
+	config      AnalyzerConfig
+	lastSignals map[string]time.Time
+	signalsMu   sync.RWMutex
 }
 
 // AnalyzerConfig contains strategy parameters
 type AnalyzerConfig struct {
-	RSIPeriod        int     // RSI calculation period (default: 14)
-	RSIOversold      float64 // RSI oversold threshold (default: 30)
-	RSIOverbought    float64 // RSI overbought threshold (default: 70)
-	FastMAPeriod     int     // Fast moving average period (default: 10)
-	SlowMAPeriod     int     // Slow moving average period (default: 20)
-	MinConfidence    float64 // Minimum confidence to generate signal (default: 0.65)
-	ExpiryMinutes    int     // Trade expiry in minutes (default: 2)
-	EnableMartingale bool    // Enable martingale levels (default: true)
-	SignalCooldown   int     // Cooldown between signals for same asset in minutes (default: 7)
+	RSIPeriod        int
+	RSIOversold      float64
+	RSIOverbought    float64
+	FastMAPeriod     int
+	SlowMAPeriod     int
+	MinConfidence    float64
+	ExpiryMinutes    int
+	EnableMartingale bool
+	SignalCooldown   int // minutes
+	// Bollinger Bands
+	BBPeriod  int
+	BBStdDev  float64
+	// Volume
+	VolumePeriod int
+	VolumeMultiplier float64 // volume must be X times avg to confirm
+	// Multi-timeframe
+	EnableMTF bool
 }
 
-// DefaultConfig returns default analyzer configuration
+// DefaultConfig returns sensible defaults
 func DefaultConfig() AnalyzerConfig {
 	return AnalyzerConfig{
 		RSIPeriod:        14,
@@ -41,10 +49,15 @@ func DefaultConfig() AnalyzerConfig {
 		RSIOverbought:    70,
 		FastMAPeriod:     10,
 		SlowMAPeriod:     20,
-		MinConfidence:    0.65,
+		MinConfidence:    0.70, // higher bar now that we have multiple confirmations
 		ExpiryMinutes:    2,
 		EnableMartingale: true,
-		SignalCooldown:   7, // 7 minutes between signals for same asset
+		SignalCooldown:   7,
+		BBPeriod:         20,
+		BBStdDev:         2.0,
+		VolumePeriod:     14,
+		VolumeMultiplier: 1.2,
+		EnableMTF:        true,
 	}
 }
 
@@ -58,126 +71,209 @@ func New(trader *wstrader.Trader, logger zerolog.Logger, config AnalyzerConfig) 
 	}
 }
 
-// AnalyzeAsset analyzes an asset and generates a signal if conditions are met
+// AnalysisResult holds the full breakdown of an analysis
+type AnalysisResult struct {
+	Asset      string
+	Direction  models.Direction
+	Confidence float64
+	Reasons    []string
+	Score      int // votes for direction: positive = bullish, negative = bearish
+}
+
+// AnalyzeAsset runs multi-factor analysis on an asset
 func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
-	// Check cooldown - don't generate signal if one was sent recently for this asset
+	// Cooldown check
 	a.signalsMu.RLock()
 	lastSignalTime, exists := a.lastSignals[asset]
 	a.signalsMu.RUnlock()
+	if exists && time.Since(lastSignalTime) < time.Duration(a.config.SignalCooldown)*time.Minute {
+		return nil, nil
+	}
 
-	if exists {
-		cooldownDuration := time.Duration(a.config.SignalCooldown) * time.Minute
-		timeSinceLastSignal := time.Since(lastSignalTime)
-		if timeSinceLastSignal < cooldownDuration {
-			a.logger.Debug().
-				Str("asset", asset).
-				Dur("time_since_last", timeSinceLastSignal).
-				Dur("cooldown", cooldownDuration).
-				Msg("Signal suppressed (cooldown active)")
-			return nil, nil // No signal during cooldown
+	// ── 1. Fetch candles: 1m timeframe (100 candles for reliable indicators)
+	candles1m, err := a.trader.GetHistoricalCandles(asset, 60, 100)
+	if err != nil || len(candles1m) < 30 {
+		return nil, fmt.Errorf("insufficient 1m candles for %s: %w", asset, err)
+	}
+
+	// ── 2. Fetch 5m candles for multi-timeframe (MTF) trend
+	var candles5m []wstrader.Candle
+	if a.config.EnableMTF {
+		candles5m, _ = a.trader.GetHistoricalCandles(asset, 300, 30)
+	}
+
+	// Extract arrays from 1m data
+	closes := extractField(candles1m, func(c wstrader.Candle) float64 { return c.Close })
+	opens  := extractField(candles1m, func(c wstrader.Candle) float64 { return c.Open })
+	vols   := extractField(candles1m, func(c wstrader.Candle) float64 { return c.Volume })
+
+	result := &AnalysisResult{Asset: asset, Reasons: []string{}}
+
+	// ── FACTOR 1: RSI (1m)
+	rsi := indicators.RSI(closes, a.config.RSIPeriod)
+	if rsi < a.config.RSIOversold {
+		result.Score++
+		result.Reasons = append(result.Reasons, fmt.Sprintf("RSI oversold (%.1f)", rsi))
+	} else if rsi > a.config.RSIOverbought {
+		result.Score--
+		result.Reasons = append(result.Reasons, fmt.Sprintf("RSI overbought (%.1f)", rsi))
+	}
+
+	// ── FACTOR 2: Moving Average trend (1m)
+	fastMA := indicators.EMA(closes, a.config.FastMAPeriod)
+	slowMA := indicators.EMA(closes, a.config.SlowMAPeriod)
+	fastMAPrev := indicators.EMA(closes[:len(closes)-1], a.config.FastMAPeriod)
+	slowMAPrev := indicators.EMA(closes[:len(closes)-1], a.config.SlowMAPeriod)
+
+	if indicators.IsBullishCrossover(fastMAPrev, slowMAPrev, fastMA, slowMA) {
+		result.Score++
+		result.Reasons = append(result.Reasons, "EMA bullish crossover (1m)")
+	} else if indicators.IsBearishCrossover(fastMAPrev, slowMAPrev, fastMA, slowMA) {
+		result.Score--
+		result.Reasons = append(result.Reasons, "EMA bearish crossover (1m)")
+	} else if fastMA > slowMA {
+		result.Score++
+		result.Reasons = append(result.Reasons, "Bullish EMA alignment (1m)")
+	} else {
+		result.Score--
+		result.Reasons = append(result.Reasons, "Bearish EMA alignment (1m)")
+	}
+
+	// ── FACTOR 3: Bollinger Bands - price at extreme + squeeze detection
+	bbMid, bbUpper, bbLower := indicators.BollingerBands(closes, a.config.BBPeriod, a.config.BBStdDev)
+	bbWidth := indicators.BandWidth(bbMid, bbUpper, bbLower)
+	currentPrice := closes[len(closes)-1]
+
+	if currentPrice <= bbLower {
+		result.Score++
+		result.Reasons = append(result.Reasons, fmt.Sprintf("Price at lower BB (width=%.4f%%)", bbWidth))
+	} else if currentPrice >= bbUpper {
+		result.Score--
+		result.Reasons = append(result.Reasons, fmt.Sprintf("Price at upper BB (width=%.4f%%)", bbWidth))
+	}
+
+	// Bollinger squeeze: bands very tight = volatility about to expand
+	// Use as extra weight when price breaks out after squeeze
+	isSqueeze := bbWidth < 0.05 // very tight bands
+	if isSqueeze {
+		result.Reasons = append(result.Reasons, fmt.Sprintf("BB squeeze detected (width=%.4f%%)", bbWidth))
+	}
+
+	// ── FACTOR 4: MACD
+	macdLine, macdSignal, macdHist := indicators.MACD(closes, 12, 26, 9)
+	if macdHist > 0 && macdLine > macdSignal {
+		result.Score++
+		result.Reasons = append(result.Reasons, fmt.Sprintf("MACD bullish (hist=%.5f)", macdHist))
+	} else if macdHist < 0 && macdLine < macdSignal {
+		result.Score--
+		result.Reasons = append(result.Reasons, fmt.Sprintf("MACD bearish (hist=%.5f)", macdHist))
+	}
+
+	// ── FACTOR 5: Volume confirmation
+	avgVol := indicators.AvgVolume(vols, a.config.VolumePeriod)
+	lastVol := vols[len(vols)-1]
+	volumeConfirmed := avgVol > 0 && lastVol >= avgVol*a.config.VolumeMultiplier
+	if volumeConfirmed {
+		result.Reasons = append(result.Reasons, fmt.Sprintf("Volume surge (%.1fx avg)", lastVol/avgVol))
+	}
+
+	// ── FACTOR 6: Candlestick patterns (1m)
+	if indicators.IsBullishEngulfing(opens, closes) {
+		result.Score++
+		result.Reasons = append(result.Reasons, "Bullish engulfing candle")
+	} else if indicators.IsBearishEngulfing(opens, closes) {
+		result.Score--
+		result.Reasons = append(result.Reasons, "Bearish engulfing candle")
+	}
+
+	lastCandle := candles1m[len(candles1m)-1]
+	if indicators.IsBullishPinBar(lastCandle.Open, lastCandle.High, lastCandle.Low, lastCandle.Close) {
+		result.Score++
+		result.Reasons = append(result.Reasons, "Bullish pin bar (hammer)")
+	} else if indicators.IsBearishPinBar(lastCandle.Open, lastCandle.High, lastCandle.Low, lastCandle.Close) {
+		result.Score--
+		result.Reasons = append(result.Reasons, "Bearish pin bar (shooting star)")
+	}
+
+	// ── FACTOR 7: Multi-timeframe trend (5m)
+	mtfTrend := 0
+	if len(candles5m) >= 20 {
+		closes5m := extractField(candles5m, func(c wstrader.Candle) float64 { return c.Close })
+		mtfTrend = indicators.Trend(closes5m, 8, 21)
+		if mtfTrend > 0 {
+			result.Score++
+			result.Reasons = append(result.Reasons, "5m trend: BULLISH")
+		} else if mtfTrend < 0 {
+			result.Score--
+			result.Reasons = append(result.Reasons, "5m trend: BEARISH")
 		}
 	}
 
-	// Fetch recent candles (60 seconds = 1 minute candles)
-	candles, err := a.trader.GetHistoricalCandles(asset, 60, 50)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get candles: %w", err)
+	// ── Score to signal conversion
+	// Require at least 4 factors agreeing for a signal (was 3)
+	absScore := result.Score
+	if absScore < 0 {
+		absScore = -absScore
 	}
 
-	if len(candles) < a.config.SlowMAPeriod+1 {
-		return nil, fmt.Errorf("insufficient candles: need %d, got %d", a.config.SlowMAPeriod+1, len(candles))
+	if absScore < 4 {
+		a.logger.Debug().
+			Str("asset", asset).
+			Int("score", result.Score).
+			Int("abs", absScore).
+			Strs("reasons", result.Reasons).
+			Msg("No signal (insufficient confirmation)")
+		return nil, nil
 	}
 
-	// Extract price arrays
-	closes := make([]float64, len(candles))
-	highs := make([]float64, len(candles))
-	lows := make([]float64, len(candles))
-
-	for i, c := range candles {
-		closes[i] = c.Close
-		highs[i] = c.High
-		lows[i] = c.Low
+	// Determine direction
+	if result.Score > 0 {
+		result.Direction = models.DirectionCall
+	} else {
+		result.Direction = models.DirectionPut
 	}
 
-	// Calculate indicators
-	rsi := indicators.RSI(closes, a.config.RSIPeriod)
-	fastMA := indicators.SMA(closes, a.config.FastMAPeriod)
-	slowMA := indicators.SMA(closes, a.config.SlowMAPeriod)
+	// Calculate confidence based on:
+	// - Number of factors agreeing (score)
+	// - Volume confirmation
+	// - Whether squeeze precedes the signal
+	// - MTF alignment
+	maxScore := 7 // total possible factors
+	baseConfidence := 0.65 + (float64(absScore)/float64(maxScore))*0.25 // 65%-90% range
 
-	// Previous MAs for crossover detection
-	closesPrev := closes[:len(closes)-1]
-	fastMAPrev := indicators.SMA(closesPrev, a.config.FastMAPeriod)
-	slowMAPrev := indicators.SMA(closesPrev, a.config.SlowMAPeriod)
-
-	currentPrice := closes[len(closes)-1]
-
-	a.logger.Debug().
-		Str("asset", asset).
-		Float64("price", currentPrice).
-		Float64("rsi", rsi).
-		Float64("fast_ma", fastMA).
-		Float64("slow_ma", slowMA).
-		Msg("Technical indicators")
-
-	// Determine signal direction and confidence
-	var direction models.Direction
-	var confidence float64
-	var reason string
-
-	// Strategy 1: RSI Oversold/Overbought
-	if rsi < a.config.RSIOversold {
-		direction = models.DirectionCall
-		confidence = 0.7 + (a.config.RSIOversold-rsi)/100.0 // More oversold = higher confidence
-		reason = fmt.Sprintf("RSI oversold (%.1f)", rsi)
-	} else if rsi > a.config.RSIOverbought {
-		direction = models.DirectionPut
-		confidence = 0.7 + (rsi-a.config.RSIOverbought)/100.0
-		reason = fmt.Sprintf("RSI overbought (%.1f)", rsi)
+	if volumeConfirmed {
+		baseConfidence += 0.03
+	}
+	if isSqueeze {
+		baseConfidence += 0.02
+	}
+	if mtfTrend != 0 && ((mtfTrend > 0 && result.Direction == models.DirectionCall) ||
+		(mtfTrend < 0 && result.Direction == models.DirectionPut)) {
+		baseConfidence += 0.03
 	}
 
-	// Strategy 2: Moving Average Crossover (higher confidence)
-	if indicators.IsBullishCrossover(fastMAPrev, slowMAPrev, fastMA, slowMA) {
-		direction = models.DirectionCall
-		confidence = 0.75
-		reason = "Bullish MA crossover"
-	} else if indicators.IsBearishCrossover(fastMAPrev, slowMAPrev, fastMA, slowMA) {
-		direction = models.DirectionPut
-		confidence = 0.75
-		reason = "Bearish MA crossover"
+	// Cap at 95%
+	if baseConfidence > 0.95 {
+		baseConfidence = 0.95
 	}
 
-	// Strategy 3: Combined signals (highest confidence)
-	if rsi < a.config.RSIOversold && fastMA > slowMA {
-		direction = models.DirectionCall
-		confidence = 0.85
-		reason = "RSI oversold + bullish trend"
-	} else if rsi > a.config.RSIOverbought && fastMA < slowMA {
-		direction = models.DirectionPut
-		confidence = 0.85
-		reason = "RSI overbought + bearish trend"
+	if baseConfidence < a.config.MinConfidence {
+		return nil, nil
 	}
 
-	// No signal if confidence too low
-	if confidence < a.config.MinConfidence {
-		return nil, nil // No error, just no signal
-	}
+	// Entry window: 2 minutes from now
+	entryWindow := time.Now().Add(2 * time.Minute).Truncate(time.Minute)
 
-	// Calculate entry window (current time + 2 minutes)
-	entryWindow := time.Now().Add(2 * time.Minute)
-	entryWindow = entryWindow.Truncate(time.Minute) // Round to nearest minute
-
-	// Generate signal
 	signal := &models.Signal{
-		Asset:      asset,
-		Direction:  direction,
-		Expiry:     a.config.ExpiryMinutes,
-		Confidence: confidence,
+		Asset:       asset,
+		Direction:   result.Direction,
+		Expiry:      a.config.ExpiryMinutes,
+		Confidence:  baseConfidence,
 		EntryWindow: entryWindow,
-		Source:     "ai-analyzer",
-		ReceivedAt: time.Now(),
+		Source:      "jvcbyte-analyzer",
+		ReceivedAt:  time.Now(),
 	}
 
-	// Add martingale levels if enabled
 	if a.config.EnableMartingale {
 		signal.MartingaleLevels = []models.MartingaleTime{
 			{Level: 1, Time: entryWindow.Add(2 * time.Minute)},
@@ -188,16 +284,29 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 
 	a.logger.Info().
 		Str("asset", asset).
-		Str("direction", direction.String()).
-		Float64("confidence", confidence).
-		Str("reason", reason).
-		Time("entry", entryWindow).
+		Str("direction", result.Direction.String()).
+		Float64("confidence", baseConfidence).
+		Int("score", result.Score).
+		Float64("rsi", rsi).
+		Float64("bb_width", bbWidth).
+		Bool("volume_confirmed", volumeConfirmed).
+		Bool("squeeze", isSqueeze).
+		Int("mtf_trend", mtfTrend).
+		Strs("reasons", result.Reasons).
 		Msg("🎯 SIGNAL GENERATED")
 
-	// Update last signal time for this asset
 	a.signalsMu.Lock()
 	a.lastSignals[asset] = time.Now()
 	a.signalsMu.Unlock()
 
 	return signal, nil
+}
+
+// extractField is a helper to pull a single field from candle slices
+func extractField(candles []wstrader.Candle, fn func(wstrader.Candle) float64) []float64 {
+	out := make([]float64, len(candles))
+	for i, c := range candles {
+		out[i] = fn(c)
+	}
+	return out
 }

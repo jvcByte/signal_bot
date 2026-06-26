@@ -24,7 +24,6 @@ func EMA(values []float64, period int) float64 {
 	}
 
 	if len(values) < period {
-		// Use SMA for initial value
 		return SMA(values, len(values))
 	}
 
@@ -41,13 +40,12 @@ func EMA(values []float64, period int) float64 {
 // RSI calculates Relative Strength Index
 func RSI(values []float64, period int) float64 {
 	if len(values) < period+1 {
-		return 50.0 // neutral
+		return 50.0
 	}
 
 	gains := 0.0
 	losses := 0.0
 
-	// Calculate initial average gain/loss
 	for i := len(values) - period; i < len(values); i++ {
 		change := values[i] - values[i-1]
 		if change > 0 {
@@ -65,20 +63,17 @@ func RSI(values []float64, period int) float64 {
 	}
 
 	rs := avgGain / avgLoss
-	rsi := 100.0 - (100.0 / (1.0 + rs))
-
-	return rsi
+	return 100.0 - (100.0 / (1.0 + rs))
 }
 
 // BollingerBands calculates Bollinger Bands (middle, upper, lower)
-func BollingerBands(values []float64, period int, stdDev float64) (float64, float64, float64) {
+func BollingerBands(values []float64, period int, stdDev float64) (middle, upper, lower float64) {
 	if len(values) < period {
 		return 0, 0, 0
 	}
 
-	middle := SMA(values, period)
+	middle = SMA(values, period)
 
-	// Calculate standard deviation
 	sum := 0.0
 	for i := len(values) - period; i < len(values); i++ {
 		diff := values[i] - middle
@@ -86,27 +81,36 @@ func BollingerBands(values []float64, period int, stdDev float64) (float64, floa
 	}
 	sd := math.Sqrt(sum / float64(period))
 
-	upper := middle + (stdDev * sd)
-	lower := middle - (stdDev * sd)
+	upper = middle + (stdDev * sd)
+	lower = middle - (stdDev * sd)
+	return
+}
 
-	return middle, upper, lower
+// BandWidth returns Bollinger Band width as % of middle band (squeeze detection)
+func BandWidth(middle, upper, lower float64) float64 {
+	if middle == 0 {
+		return 0
+	}
+	return (upper - lower) / middle * 100
 }
 
 // MACD calculates Moving Average Convergence Divergence
-// Returns: (macd, signal, histogram)
-func MACD(values []float64, fast, slow, signal int) (float64, float64, float64) {
-	if len(values) < slow {
+// Returns: (macd line, signal line, histogram)
+func MACD(values []float64, fast, slow, signalPeriod int) (float64, float64, float64) {
+	if len(values) < slow+signalPeriod {
 		return 0, 0, 0
 	}
 
-	fastEMA := EMA(values, fast)
-	slowEMA := EMA(values, slow)
-	macdLine := fastEMA - slowEMA
+	// Calculate MACD line history for signal line EMA
+	macdHistory := make([]float64, 0)
+	for i := slow; i <= len(values); i++ {
+		f := EMA(values[:i], fast)
+		s := EMA(values[:i], slow)
+		macdHistory = append(macdHistory, f-s)
+	}
 
-	// For signal line, we need historical MACD values
-	// Simplified: using current MACD as signal for now
-	// TODO: Track historical MACD values for proper signal line
-	signalLine := macdLine
+	macdLine := macdHistory[len(macdHistory)-1]
+	signalLine := EMA(macdHistory, signalPeriod)
 	histogram := macdLine - signalLine
 
 	return macdLine, signalLine, histogram
@@ -122,50 +126,95 @@ func IsBearishCrossover(fastPrev, slowPrev, fastCurr, slowCurr float64) bool {
 	return fastPrev >= slowPrev && fastCurr < slowCurr
 }
 
-// StochasticOscillator calculates %K and %D
-func StochasticOscillator(highs, lows, closes []float64, period int) (float64, float64) {
-	if len(closes) < period {
-		return 50, 50
-	}
-
-	// Find highest high and lowest low in period
-	highestHigh := highs[len(highs)-period]
-	lowestLow := lows[len(lows)-period]
-
-	for i := len(highs) - period + 1; i < len(highs); i++ {
-		if highs[i] > highestHigh {
-			highestHigh = highs[i]
-		}
-		if lows[i] < lowestLow {
-			lowestLow = lows[i]
-		}
-	}
-
-	currentClose := closes[len(closes)-1]
-	percentK := 100.0 * (currentClose - lowestLow) / (highestHigh - lowestLow)
-
-	// %D is 3-period SMA of %K (simplified: using %K for now)
-	percentD := percentK
-
-	return percentK, percentD
-}
-
-// ATR calculates Average True Range (volatility indicator)
+// ATR calculates Average True Range
 func ATR(highs, lows, closes []float64, period int) float64 {
 	if len(closes) < period+1 {
 		return 0
 	}
 
-	trueRanges := make([]float64, 0)
-
+	trueRanges := make([]float64, 0, period)
 	for i := len(closes) - period; i < len(closes); i++ {
 		high := highs[i]
 		low := lows[i]
 		prevClose := closes[i-1]
-
 		tr := math.Max(high-low, math.Max(math.Abs(high-prevClose), math.Abs(low-prevClose)))
 		trueRanges = append(trueRanges, tr)
 	}
 
 	return SMA(trueRanges, len(trueRanges))
+}
+
+// AvgVolume returns the average volume over the last N candles
+func AvgVolume(volumes []float64, period int) float64 {
+	return SMA(volumes, period)
+}
+
+// IsBullishEngulfing checks if the last two candles form a bullish engulfing pattern
+func IsBullishEngulfing(opens, closes []float64) bool {
+	n := len(opens)
+	if n < 2 {
+		return false
+	}
+	prev := n - 2
+	curr := n - 1
+	// Previous candle is bearish, current is bullish and engulfs previous
+	prevBearish := closes[prev] < opens[prev]
+	currBullish := closes[curr] > opens[curr]
+	engulfs := opens[curr] <= closes[prev] && closes[curr] >= opens[prev]
+	return prevBearish && currBullish && engulfs
+}
+
+// IsBearishEngulfing checks if the last two candles form a bearish engulfing pattern
+func IsBearishEngulfing(opens, closes []float64) bool {
+	n := len(opens)
+	if n < 2 {
+		return false
+	}
+	prev := n - 2
+	curr := n - 1
+	prevBullish := closes[prev] > opens[prev]
+	currBearish := closes[curr] < opens[curr]
+	engulfs := opens[curr] >= closes[prev] && closes[curr] <= opens[prev]
+	return prevBullish && currBearish && engulfs
+}
+
+// IsBullishPinBar checks for a bullish pin bar (hammer) - long lower wick, small body at top
+func IsBullishPinBar(open, high, low, close float64) bool {
+	body := math.Abs(close - open)
+	lowerWick := math.Min(open, close) - low
+	upperWick := high - math.Max(open, close)
+	totalRange := high - low
+	if totalRange == 0 {
+		return false
+	}
+	// Lower wick at least 2x body, body in upper 1/3, small upper wick
+	return lowerWick >= 2*body && body/totalRange < 0.35 && upperWick < body
+}
+
+// IsBearishPinBar checks for a bearish pin bar (shooting star) - long upper wick, small body at bottom
+func IsBearishPinBar(open, high, low, close float64) bool {
+	body := math.Abs(close - open)
+	upperWick := high - math.Max(open, close)
+	lowerWick := math.Min(open, close) - low
+	totalRange := high - low
+	if totalRange == 0 {
+		return false
+	}
+	return upperWick >= 2*body && body/totalRange < 0.35 && lowerWick < body
+}
+
+// Trend returns 1 (bullish), -1 (bearish), 0 (neutral) based on EMA alignment
+func Trend(closes []float64, fastPeriod, slowPeriod int) int {
+	if len(closes) < slowPeriod {
+		return 0
+	}
+	fast := EMA(closes, fastPeriod)
+	slow := EMA(closes, slowPeriod)
+	if fast > slow*1.0001 {
+		return 1
+	}
+	if fast < slow*0.9999 {
+		return -1
+	}
+	return 0
 }
