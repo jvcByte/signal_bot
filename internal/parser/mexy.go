@@ -33,13 +33,17 @@ func ParseMexyDetailed(text string) (*MexySignal, error) {
 		MartingaleLevels: []MartingaleLevel{},
 	}
 
-	// Extract asset - handles: "📉  GBP/JPY (OTC)", "📉  🇬🇧 GBP/JPY 🇯🇵 (OTC)", "AUDUSD (OTC)"
-	assetRegex := regexp.MustCompile(`(?:📈|📉)\s+(?:[^\s]+\s+)?([A-Z]{3}/[A-Z]{3})`)
+	// Extract asset - handles:
+	// "📉  GBP/JPY (OTC)"
+	// "📈  UK100 (OTC)"
+	// "📉  🇬🇧 GBP/JPY 🇯🇵 (OTC)"
+	// "AUDUSD (OTC)"
+	assetRegex := regexp.MustCompile(`(?:📈|📉)\s+(?:[^\s/A-Z0-9]+\s+)?([A-Z0-9]+(?:/[A-Z0-9]+)?)\s`)
 	if matches := assetRegex.FindStringSubmatch(text); matches != nil {
 		signal.Asset = normalizeAsset(matches[1])
 	} else {
-		// fallback: plain asset without emoji
-		assetRegex2 := regexp.MustCompile(`([A-Z]{3}/[A-Z]{3})\s*(?:\(OTC\))?`)
+		// fallback: plain asset before (OTC)
+		assetRegex2 := regexp.MustCompile(`([A-Z0-9]+(?:/[A-Z0-9]+)?)\s*\(OTC\)`)
 		if matches := assetRegex2.FindStringSubmatch(text); matches != nil {
 			signal.Asset = normalizeAsset(matches[1])
 		} else {
