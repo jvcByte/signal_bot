@@ -135,9 +135,7 @@ func formatSignalMessage(signal *models.Signal) string {
 	}
 
 	msg := fmt.Sprintf(`MEXY BINARY
-
-🚨 TRADE NOW!!
-
+TRADE NOW!!
 %s (OTC)
 Timeframe: %d-min expiry
 AI Confidence: %.0f%%
@@ -152,7 +150,7 @@ Direction: %s`,
 
 	// Add martingale levels if present
 	if len(signal.MartingaleLevels) > 0 {
-		msg += "\n\nMartingale Levels:"
+		msg += "\nMartingale Levels:"
 		for _, ml := range signal.MartingaleLevels {
 			msg += fmt.Sprintf("\n• Level %d → %s", ml.Level, ml.Time.Format("3:04 PM"))
 		}
