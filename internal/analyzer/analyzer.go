@@ -162,8 +162,8 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		return nil, nil // No error, just no signal
 	}
 
-	// Calculate entry window (current time + 1 minute)
-	entryWindow := time.Now().Add(1 * time.Minute)
+	// Calculate entry window (current time + 2 minutes)
+	entryWindow := time.Now().Add(2 * time.Minute)
 	entryWindow = entryWindow.Truncate(time.Minute) // Round to nearest minute
 
 	// Generate signal
