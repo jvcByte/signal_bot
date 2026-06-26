@@ -103,6 +103,7 @@ func analyzeAndSendSignals(ctx context.Context, an *analyzer.SignalAnalyzer, tg 
 	logger.Info().Msg("─────────────────────────────────────")
 	logger.Info().Msg("🔍 Analyzing market conditions...")
 
+	signalsFound := 0
 	for _, asset := range assets {
 		signal, err := an.AnalyzeAsset(asset)
 		if err != nil {
@@ -111,9 +112,11 @@ func analyzeAndSendSignals(ctx context.Context, an *analyzer.SignalAnalyzer, tg 
 		}
 
 		if signal == nil {
-			logger.Debug().Str("asset", asset).Msg("No signal (conditions not met)")
+			logger.Info().Str("asset", asset).Msg("  ↳ No signal")
 			continue
 		}
+
+		signalsFound++
 
 		// Format signal as Mexy-style message
 		message := formatSignalMessage(signal)
@@ -124,7 +127,15 @@ func analyzeAndSendSignals(ctx context.Context, an *analyzer.SignalAnalyzer, tg 
 			continue
 		}
 
-		logger.Info().Str("asset", asset).Msg("✅ Signal posted to Telegram")
+		logger.Info().
+			Str("asset", asset).
+			Str("direction", signal.Direction.String()).
+			Float64("confidence", signal.Confidence).
+			Msg("✅ Signal posted to Telegram")
+	}
+
+	if signalsFound == 0 {
+		logger.Info().Msg("  ↳ No signals this cycle (market conditions not met)")
 	}
 }
 

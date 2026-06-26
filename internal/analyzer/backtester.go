@@ -35,6 +35,7 @@ func BacktestAsset(
 	asset string,
 	candles []wstrader.Candle,
 	candles5m []wstrader.Candle,
+	candles15m []wstrader.Candle,
 	cfg AnalyzerConfig,
 	expiryMinutes int,
 	logger zerolog.Logger,
@@ -52,31 +53,29 @@ func BacktestAsset(
 	peak := 0.0
 	maxDD := 0.0
 
-	// Need at least SlowMAPeriod + BBPeriod candles for indicators
 	minCandles := cfg.SlowMAPeriod + cfg.BBPeriod + 5
 	if len(candles) < minCandles+expiryMinutes {
 		logger.Warn().Str("asset", asset).Int("have", len(candles)).Int("need", minCandles).Msg("Not enough candles for backtest")
 		return result
 	}
 
-	// Walk-forward: simulate analysis at each candle, check result expiryMinutes later
 	for i := minCandles; i < len(candles)-expiryMinutes; i++ {
 		window := candles[:i]
 
-		closes  := extractField(window, func(c wstrader.Candle) float64 { return c.Close })
-		opens   := extractField(window, func(c wstrader.Candle) float64 { return c.Open })
-		highs   := extractField(window, func(c wstrader.Candle) float64 { return c.High })
-		lows    := extractField(window, func(c wstrader.Candle) float64 { return c.Low })
-		vols    := extractField(window, func(c wstrader.Candle) float64 { return c.Volume })
+		closes := extractField(window, func(c wstrader.Candle) float64 { return c.Close })
+		opens  := extractField(window, func(c wstrader.Candle) float64 { return c.Open })
+		highs  := extractField(window, func(c wstrader.Candle) float64 { return c.High })
+		lows   := extractField(window, func(c wstrader.Candle) float64 { return c.Low })
+		vols   := extractField(window, func(c wstrader.Candle) float64 { return c.Volume })
 
-		score, _ := computeScore(closes, opens, highs, lows, vols, candles5m, cfg)
+		score, _ := computeScore(closes, opens, highs, lows, vols, candles5m, candles15m, cfg)
 
 		absScore := score
 		if absScore < 0 {
 			absScore = -absScore
 		}
-		if absScore < 4 {
-			continue // no signal
+		if absScore < 5 {
+			continue
 		}
 
 		var direction models.Direction
@@ -86,10 +85,8 @@ func BacktestAsset(
 			direction = models.DirectionPut
 		}
 
-		// Determine outcome: compare entry close price vs expiry close price
 		entryPrice := closes[len(closes)-1]
-		exitCandle := candles[i+expiryMinutes]
-		exitPrice := exitCandle.Close
+		exitPrice := candles[i+expiryMinutes].Close
 
 		var win bool
 		if direction == models.DirectionCall {
@@ -107,12 +104,10 @@ func BacktestAsset(
 			equity -= stake
 		}
 
-		// Track drawdown
 		if equity > peak {
 			peak = equity
 		}
-		dd := peak - equity
-		if dd > maxDD {
+		if dd := peak - equity; dd > maxDD {
 			maxDD = dd
 		}
 	}
@@ -126,14 +121,17 @@ func BacktestAsset(
 	return result
 }
 
-// computeScore runs all indicators and returns the vote score + confidence
-// Extracted so both live analysis and backtesting share the same logic
+// computeScore runs all indicators and returns a directional vote score.
+// Positive = bullish, negative = bearish. Magnitude = conviction.
+// Used by both live analyzer and backtester.
 func computeScore(
 	closes, opens, highs, lows, vols []float64,
 	candles5m []wstrader.Candle,
+	candles15m []wstrader.Candle,
 	cfg AnalyzerConfig,
 ) (score int, reasons []string) {
-	// RSI
+
+	// ── RSI
 	rsi := indicators.RSI(closes, cfg.RSIPeriod)
 	if rsi < cfg.RSIOversold {
 		score++
@@ -143,7 +141,7 @@ func computeScore(
 		reasons = append(reasons, fmt.Sprintf("RSI overbought (%.1f)", rsi))
 	}
 
-	// EMA trend
+	// ── EMA trend + crossover
 	fastMA     := indicators.EMA(closes, cfg.FastMAPeriod)
 	slowMA     := indicators.EMA(closes, cfg.SlowMAPeriod)
 	fastMAPrev := indicators.EMA(closes[:len(closes)-1], cfg.FastMAPeriod)
@@ -161,8 +159,9 @@ func computeScore(
 		score--
 	}
 
-	// Bollinger Bands
+	// ── Bollinger Bands
 	bbMid, bbUpper, bbLower := indicators.BollingerBands(closes, cfg.BBPeriod, cfg.BBStdDev)
+	_ = bbMid
 	currentPrice := closes[len(closes)-1]
 	if currentPrice <= bbLower {
 		score++
@@ -171,9 +170,8 @@ func computeScore(
 		score--
 		reasons = append(reasons, "Price at upper BB")
 	}
-	_ = bbMid
 
-	// MACD
+	// ── MACD
 	_, macdSignal, macdHist := indicators.MACD(closes, 12, 26, 9)
 	if macdHist > 0 && macdSignal >= 0 {
 		score++
@@ -181,14 +179,14 @@ func computeScore(
 		score--
 	}
 
-	// Volume
-	avgVol := indicators.AvgVolume(vols, cfg.VolumePeriod)
+	// ── Volume
+	avgVol  := indicators.AvgVolume(vols, cfg.VolumePeriod)
 	lastVol := vols[len(vols)-1]
 	if avgVol > 0 && lastVol >= avgVol*cfg.VolumeMultiplier {
 		reasons = append(reasons, "Volume surge")
 	}
 
-	// Candlestick patterns
+	// ── Candlestick patterns
 	if indicators.IsBullishEngulfing(opens, closes) {
 		score++
 		reasons = append(reasons, "Bullish engulfing")
@@ -196,7 +194,6 @@ func computeScore(
 		score--
 		reasons = append(reasons, "Bearish engulfing")
 	}
-
 	n := len(opens)
 	if n > 0 {
 		if indicators.IsBullishPinBar(opens[n-1], highs[n-1], lows[n-1], closes[n-1]) {
@@ -208,17 +205,37 @@ func computeScore(
 		}
 	}
 
-	// MTF
+	// ── MTF 5m
+	t5 := 0
 	if len(candles5m) >= 20 {
-		closes5m := extractField(candles5m, func(c wstrader.Candle) float64 { return c.Close })
-		trend := indicators.Trend(closes5m, 8, 21)
-		if trend > 0 {
+		c5 := extractField(candles5m, func(c wstrader.Candle) float64 { return c.Close })
+		t5 = indicators.Trend(c5, 8, 21)
+		if t5 > 0 {
 			score++
 			reasons = append(reasons, "5m trend: BULLISH")
-		} else if trend < 0 {
+		} else if t5 < 0 {
 			score--
 			reasons = append(reasons, "5m trend: BEARISH")
 		}
+	}
+
+	// ── MTF 15m
+	t15 := 0
+	if len(candles15m) >= 20 {
+		c15 := extractField(candles15m, func(c wstrader.Candle) float64 { return c.Close })
+		t15 = indicators.Trend(c15, 8, 21)
+		if t15 > 0 {
+			score++
+			reasons = append(reasons, "15m trend: BULLISH")
+		} else if t15 < 0 {
+			score--
+			reasons = append(reasons, "15m trend: BEARISH")
+		}
+	}
+
+	// ── MTF conflict: 5m and 15m disagree → no trade
+	if t5 != 0 && t15 != 0 && t5 != t15 {
+		score = 0
 	}
 
 	return score, reasons

@@ -96,10 +96,13 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		return nil, fmt.Errorf("insufficient 1m candles for %s: %w", asset, err)
 	}
 
-	// ── 2. Fetch 5m candles for multi-timeframe (MTF) trend
+	// ── 2. Fetch 5m and 15m candles for multi-timeframe (MTF) trend
+	// These change slowly so we fetch fewer candles
 	var candles5m []wstrader.Candle
+	var candles15m []wstrader.Candle
 	if a.config.EnableMTF {
 		candles5m, _ = a.trader.GetHistoricalCandles(asset, 300, 30)
+		candles15m, _ = a.trader.GetHistoricalCandles(asset, 900, 20)
 	}
 
 	// Extract arrays from 1m data
@@ -195,18 +198,46 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		result.Reasons = append(result.Reasons, "Bearish pin bar (shooting star)")
 	}
 
-	// ── FACTOR 7: Multi-timeframe trend (5m)
+	// ── FACTOR 7: Multi-timeframe trend (5m + 15m)
 	mtfTrend := 0
 	if len(candles5m) >= 20 {
 		closes5m := extractField(candles5m, func(c wstrader.Candle) float64 { return c.Close })
-		mtfTrend = indicators.Trend(closes5m, 8, 21)
-		if mtfTrend > 0 {
-			result.Score++
+		trend5m := indicators.Trend(closes5m, 8, 21)
+		mtfTrend += trend5m
+		if trend5m > 0 {
 			result.Reasons = append(result.Reasons, "5m trend: BULLISH")
-		} else if mtfTrend < 0 {
-			result.Score--
+		} else if trend5m < 0 {
 			result.Reasons = append(result.Reasons, "5m trend: BEARISH")
 		}
+	}
+
+	if len(candles15m) >= 20 {
+		closes15m := extractField(candles15m, func(c wstrader.Candle) float64 { return c.Close })
+		trend15m := indicators.Trend(closes15m, 8, 21)
+		mtfTrend += trend15m
+		if trend15m > 0 {
+			result.Reasons = append(result.Reasons, "15m trend: BULLISH")
+		} else if trend15m < 0 {
+			result.Reasons = append(result.Reasons, "15m trend: BEARISH")
+		}
+	}
+
+	// If MTF trends conflict (5m bullish but 15m bearish) → no signal
+	if len(candles5m) >= 20 && len(candles15m) >= 20 {
+		closes5m  := extractField(candles5m, func(c wstrader.Candle) float64 { return c.Close })
+		closes15m := extractField(candles15m, func(c wstrader.Candle) float64 { return c.Close })
+		t5  := indicators.Trend(closes5m, 8, 21)
+		t15 := indicators.Trend(closes15m, 8, 21)
+		if t5 != 0 && t15 != 0 && t5 != t15 {
+			a.logger.Debug().Str("asset", asset).Msg("MTF conflict - skipping signal")
+			return nil, nil
+		}
+	}
+
+	if mtfTrend > 0 {
+		result.Score++
+	} else if mtfTrend < 0 {
+		result.Score--
 	}
 
 	// ── Score to signal conversion
@@ -216,7 +247,7 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		absScore = -absScore
 	}
 
-	if absScore < 4 {
+	if absScore < 5 {
 		a.logger.Debug().
 			Str("asset", asset).
 			Int("score", result.Score).
@@ -247,9 +278,10 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 	if isSqueeze {
 		baseConfidence += 0.02
 	}
-	if mtfTrend != 0 && ((mtfTrend > 0 && result.Direction == models.DirectionCall) ||
-		(mtfTrend < 0 && result.Direction == models.DirectionPut)) {
-		baseConfidence += 0.03
+	if mtfTrend > 0 && result.Direction == models.DirectionCall {
+		baseConfidence += 0.05
+	} else if mtfTrend < 0 && result.Direction == models.DirectionPut {
+		baseConfidence += 0.05
 	}
 
 	// Cap at 95%

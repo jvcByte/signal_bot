@@ -43,7 +43,7 @@ func main() {
 	fmt.Println("╚════════════════════════════════════════════════════════════╝")
 	fmt.Printf("  Period: last %d 1-minute candles per asset\n", *candles)
 	fmt.Printf("  Strategy: RSI + EMA + Bollinger + MACD + Volume + Patterns + MTF\n")
-	fmt.Printf("  Min score threshold: 4 factors agreeing\n\n")
+	fmt.Printf("  Min score threshold: 5 factors agreeing + MTF conflict filter\n\n")
 
 	totalTrades := 0
 	totalWins   := 0
@@ -58,10 +58,11 @@ func main() {
 			continue
 		}
 
-		// Fetch 5m candles for MTF
-		c5m, _ := trader.GetHistoricalCandles(asset, 300, 100)
+		// Fetch 5m and 15m candles for MTF
+		c5m, _  := trader.GetHistoricalCandles(asset, 300, 100)
+		c15m, _ := trader.GetHistoricalCandles(asset, 900, 50)
 
-		result := analyzer.BacktestAsset(asset, c1m, c5m, analyzerCfg, 2, logger)
+		result := analyzer.BacktestAsset(asset, c1m, c5m, c15m, analyzerCfg, 2, logger)
 
 		if result.TotalTrades == 0 {
 			fmt.Printf("  %-12s  No signals generated\n", asset)
