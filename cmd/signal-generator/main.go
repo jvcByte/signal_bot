@@ -131,7 +131,6 @@ func analyzeAndSendSignals(ctx context.Context, an *analyzer.SignalAnalyzer, tg 
 		}
 
 		if signal == nil {
-			logger.Info().Str("asset", asset).Msg("  ↳ No signal")
 			continue
 		}
 

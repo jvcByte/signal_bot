@@ -124,9 +124,9 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		result.Reasons = append(result.Reasons, fmt.Sprintf("RSI overbought (%.1f)", rsi))
 	}
 
-	// ── FACTOR 2: Moving Average trend (1m)
-	fastMA := indicators.EMA(closes, a.config.FastMAPeriod)
-	slowMA := indicators.EMA(closes, a.config.SlowMAPeriod)
+	// ── FACTOR 2: EMA crossover only (not alignment - too noisy in ranging markets)
+	fastMA     := indicators.EMA(closes, a.config.FastMAPeriod)
+	slowMA     := indicators.EMA(closes, a.config.SlowMAPeriod)
 	fastMAPrev := indicators.EMA(closes[:len(closes)-1], a.config.FastMAPeriod)
 	slowMAPrev := indicators.EMA(closes[:len(closes)-1], a.config.SlowMAPeriod)
 
@@ -136,12 +136,14 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 	} else if indicators.IsBearishCrossover(fastMAPrev, slowMAPrev, fastMA, slowMA) {
 		result.Score--
 		result.Reasons = append(result.Reasons, "EMA bearish crossover (1m)")
-	} else if fastMA > slowMA {
+	}
+	// EMA alignment (weaker signal - only score if RSI agrees)
+	if fastMA > slowMA && rsi < 50 {
 		result.Score++
-		result.Reasons = append(result.Reasons, "Bullish EMA alignment (1m)")
-	} else {
+		result.Reasons = append(result.Reasons, "Bullish EMA + low RSI")
+	} else if fastMA < slowMA && rsi > 50 {
 		result.Score--
-		result.Reasons = append(result.Reasons, "Bearish EMA alignment (1m)")
+		result.Reasons = append(result.Reasons, "Bearish EMA + high RSI")
 	}
 
 	// ── FACTOR 3: Bollinger Bands - price at extreme + squeeze detection
@@ -250,12 +252,14 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 	}
 
 	if absScore < a.config.SignalThreshold {
-		a.logger.Debug().
+		a.logger.Info().
 			Str("asset", asset).
 			Int("score", result.Score).
-			Int("abs", absScore).
-			Strs("reasons", result.Reasons).
-			Msg("No signal (insufficient confirmation)")
+			Int("abs_score", absScore).
+			Int("threshold", a.config.SignalThreshold).
+			Float64("rsi", rsi).
+			Strs("factors", result.Reasons).
+			Msg("  ↳ No signal")
 		return nil, nil
 	}
 

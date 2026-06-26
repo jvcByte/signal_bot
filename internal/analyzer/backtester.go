@@ -147,15 +147,18 @@ func computeScore(
 	fastMAPrev := indicators.EMA(closes[:len(closes)-1], cfg.FastMAPeriod)
 	slowMAPrev := indicators.EMA(closes[:len(closes)-1], cfg.SlowMAPeriod)
 
+	// ── EMA crossover only (not plain alignment - too noisy in ranging markets)
 	if indicators.IsBullishCrossover(fastMAPrev, slowMAPrev, fastMA, slowMA) {
 		score++
 		reasons = append(reasons, "EMA bullish crossover")
 	} else if indicators.IsBearishCrossover(fastMAPrev, slowMAPrev, fastMA, slowMA) {
 		score--
 		reasons = append(reasons, "EMA bearish crossover")
-	} else if fastMA > slowMA {
+	}
+	// EMA alignment only when RSI agrees (avoid false signals in ranging markets)
+	if fastMA > slowMA && rsi < 50 {
 		score++
-	} else {
+	} else if fastMA < slowMA && rsi > 50 {
 		score--
 	}
 
