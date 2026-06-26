@@ -31,6 +31,7 @@ type AnalyzerConfig struct {
 	ExpiryMinutes    int
 	EnableMartingale bool
 	SignalCooldown   int // minutes
+	SignalThreshold  int // min factors agreeing to produce a signal (default: 5)
 	// Bollinger Bands
 	BBPeriod  int
 	BBStdDev  float64
@@ -49,10 +50,11 @@ func DefaultConfig() AnalyzerConfig {
 		RSIOverbought:    70,
 		FastMAPeriod:     10,
 		SlowMAPeriod:     20,
-		MinConfidence:    0.70, // higher bar now that we have multiple confirmations
+		MinConfidence:    0.70,
 		ExpiryMinutes:    2,
 		EnableMartingale: true,
 		SignalCooldown:   7,
+		SignalThreshold:  5, // default: require 5/9 factors
 		BBPeriod:         20,
 		BBStdDev:         2.0,
 		VolumePeriod:     14,
@@ -247,7 +249,7 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		absScore = -absScore
 	}
 
-	if absScore < 5 {
+	if absScore < a.config.SignalThreshold {
 		a.logger.Debug().
 			Str("asset", asset).
 			Int("score", result.Score).

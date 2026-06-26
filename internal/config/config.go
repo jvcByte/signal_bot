@@ -12,6 +12,7 @@ type Config struct {
 	IQOption IQOptionConfig `yaml:"iqoption"`
 	Trading  TradingConfig  `yaml:"trading"`
 	Risk     RiskConfig     `yaml:"risk"`
+	Analyzer AnalyzerConfig `yaml:"analyzer"`
 	Logging  LoggingConfig  `yaml:"logging"`
 	Database DatabaseConfig `yaml:"database"`
 }
@@ -44,6 +45,13 @@ type RiskConfig struct {
 	MinSignalConfidence float64 `yaml:"min_signal_confidence"`
 	Martingale          bool    `yaml:"martingale"`
 	MartingaleMax       int     `yaml:"martingale_max"`
+}
+
+type AnalyzerConfig struct {
+	SignalThreshold int      `yaml:"signal_threshold"` // min factors agreeing (default: 4)
+	IntervalSeconds int      `yaml:"interval_seconds"` // analysis interval (default: 60)
+	SignalCooldown  int      `yaml:"signal_cooldown"`  // minutes between signals per asset
+	Assets          []string `yaml:"assets"`
 }
 
 type LoggingConfig struct {

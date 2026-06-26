@@ -20,8 +20,6 @@ import (
 
 var (
 	configPath = flag.String("config", "configs/config.yaml", "Path to config file")
-	interval   = flag.Int("interval", 60, "Analysis interval in seconds")
-	assets     = flag.String("assets", "EURUSD,GBPUSD,AUDUSD,USDJPY", "Comma-separated list of assets to analyze")
 )
 
 func main() {
@@ -67,13 +65,34 @@ func main() {
 	// Give Telegram time to connect
 	time.Sleep(2 * time.Second)
 
-	// Create analyzer
+	// Create analyzer with config-driven settings
 	analyzerCfg := analyzer.DefaultConfig()
+	if cfg.Analyzer.SignalThreshold > 0 {
+		analyzerCfg.SignalThreshold = cfg.Analyzer.SignalThreshold
+	}
+	if cfg.Analyzer.SignalCooldown > 0 {
+		analyzerCfg.SignalCooldown = cfg.Analyzer.SignalCooldown
+	}
 	an := analyzer.New(trader, logger, analyzerCfg)
 
-	// Parse asset list
-	assetList := []string{"EURUSD", "GBPUSD", "AUDUSD", "USDJPY"}
-	logger.Info().Strs("assets", assetList).Int("interval_sec", *interval).Msg("✓ Signal generator ready")
+	// Asset list from config (fallback to defaults)
+	assetList := cfg.Analyzer.Assets
+	if len(assetList) == 0 {
+		assetList = []string{"EURUSD", "GBPUSD", "AUDUSD", "USDJPY"}
+		logger.Warn().Msg("No assets in config, using defaults")
+	}
+
+	intervalSec := cfg.Analyzer.IntervalSeconds
+	if intervalSec <= 0 {
+		intervalSec = 60
+	}
+
+	logger.Info().
+		Strs("assets", assetList).
+		Int("interval_sec", intervalSec).
+		Int("signal_threshold", analyzerCfg.SignalThreshold).
+		Int("signal_cooldown_min", analyzerCfg.SignalCooldown).
+		Msg("✓ Signal generator ready")
 
 	logger.Info().Msg("═══════════════════════════════════════")
 	logger.Info().Msg("✓ GENERATOR ACTIVE")
@@ -83,7 +102,7 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	ticker := time.NewTicker(time.Duration(*interval) * time.Second)
+	ticker := time.NewTicker(time.Duration(intervalSec) * time.Second)
 	defer ticker.Stop()
 
 	// Run analysis loop
