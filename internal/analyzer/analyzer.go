@@ -114,14 +114,25 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 
 	result := &AnalysisResult{Asset: asset, Reasons: []string{}}
 
-	// ── FACTOR 1: RSI (1m)
+	// ── FACTOR 1: RSI
 	rsi := indicators.RSI(closes, a.config.RSIPeriod)
 	if rsi < a.config.RSIOversold {
-		result.Score++
-		result.Reasons = append(result.Reasons, fmt.Sprintf("RSI oversold (%.1f)", rsi))
+		// Weight by how oversold: RSI 20 = +2, RSI 10 = +3
+		if rsi < 20 {
+			result.Score += 2
+			result.Reasons = append(result.Reasons, fmt.Sprintf("RSI extremely oversold (%.1f)", rsi))
+		} else {
+			result.Score++
+			result.Reasons = append(result.Reasons, fmt.Sprintf("RSI oversold (%.1f)", rsi))
+		}
 	} else if rsi > a.config.RSIOverbought {
-		result.Score--
-		result.Reasons = append(result.Reasons, fmt.Sprintf("RSI overbought (%.1f)", rsi))
+		if rsi > 80 {
+			result.Score -= 2
+			result.Reasons = append(result.Reasons, fmt.Sprintf("RSI extremely overbought (%.1f)", rsi))
+		} else {
+			result.Score--
+			result.Reasons = append(result.Reasons, fmt.Sprintf("RSI overbought (%.1f)", rsi))
+		}
 	}
 
 	// ── FACTOR 2: EMA crossover only (not alignment - too noisy in ranging markets)
@@ -203,30 +214,39 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 	}
 
 	// ── FACTOR 7: Multi-timeframe trend (5m + 15m)
+	// MTF only adds score if it AGREES with RSI direction (avoid overriding extremes)
+	rsiBullish := rsi < 50
+	rsiBearish := rsi > 50
 	mtfTrend := 0
+
 	if len(candles5m) >= 20 {
 		closes5m := extractField(candles5m, func(c wstrader.Candle) float64 { return c.Close })
 		trend5m := indicators.Trend(closes5m, 8, 21)
-		mtfTrend += trend5m
-		if trend5m > 0 {
-			result.Reasons = append(result.Reasons, "5m trend: BULLISH")
-		} else if trend5m < 0 {
-			result.Reasons = append(result.Reasons, "5m trend: BEARISH")
+		// Only count 5m trend if not contradicting RSI extreme
+		if !(rsi < a.config.RSIOversold && trend5m < 0) && !(rsi > a.config.RSIOverbought && trend5m > 0) {
+			mtfTrend += trend5m
+			if trend5m > 0 {
+				result.Reasons = append(result.Reasons, "5m trend: BULLISH")
+			} else if trend5m < 0 {
+				result.Reasons = append(result.Reasons, "5m trend: BEARISH")
+			}
 		}
 	}
 
 	if len(candles15m) >= 20 {
 		closes15m := extractField(candles15m, func(c wstrader.Candle) float64 { return c.Close })
 		trend15m := indicators.Trend(closes15m, 8, 21)
-		mtfTrend += trend15m
-		if trend15m > 0 {
-			result.Reasons = append(result.Reasons, "15m trend: BULLISH")
-		} else if trend15m < 0 {
-			result.Reasons = append(result.Reasons, "15m trend: BEARISH")
+		if !(rsi < a.config.RSIOversold && trend15m < 0) && !(rsi > a.config.RSIOverbought && trend15m > 0) {
+			mtfTrend += trend15m
+			if trend15m > 0 {
+				result.Reasons = append(result.Reasons, "15m trend: BULLISH")
+			} else if trend15m < 0 {
+				result.Reasons = append(result.Reasons, "15m trend: BEARISH")
+			}
 		}
 	}
 
-	// If MTF trends conflict (5m bullish but 15m bearish) → no signal
+	// MTF conflict: 5m and 15m disagree → no trade
 	if len(candles5m) >= 20 && len(candles15m) >= 20 {
 		closes5m  := extractField(candles5m, func(c wstrader.Candle) float64 { return c.Close })
 		closes15m := extractField(candles15m, func(c wstrader.Candle) float64 { return c.Close })
@@ -243,6 +263,9 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 	} else if mtfTrend < 0 {
 		result.Score--
 	}
+
+	_ = rsiBullish
+	_ = rsiBearish
 
 	// ── Score to signal conversion
 	// Require at least 4 factors agreeing for a signal (was 3)
