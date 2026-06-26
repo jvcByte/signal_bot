@@ -68,7 +68,7 @@ func main() {
 	// Create analyzer with config-driven settings
 	analyzerCfg := analyzer.DefaultConfig()
 	if cfg.Analyzer.SignalThreshold > 0 {
-		analyzerCfg.SignalThreshold = cfg.Analyzer.SignalThreshold
+		analyzerCfg.SignalThreshold = float64(cfg.Analyzer.SignalThreshold)
 	}
 	if cfg.Analyzer.SignalCooldown > 0 {
 		analyzerCfg.SignalCooldown = cfg.Analyzer.SignalCooldown
@@ -106,7 +106,7 @@ func main() {
 	logger.Info().
 		Strs("assets", validAssets).
 		Int("interval_sec", intervalSec).
-		Int("signal_threshold", analyzerCfg.SignalThreshold).
+		Float64("signal_threshold", analyzerCfg.SignalThreshold).
 		Int("signal_cooldown_min", analyzerCfg.SignalCooldown).
 		Msg("✓ Signal generator ready")
 
