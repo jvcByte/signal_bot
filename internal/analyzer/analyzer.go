@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -12,9 +13,11 @@ import (
 
 // SignalAnalyzer generates trading signals from candle data
 type SignalAnalyzer struct {
-	trader *wstrader.Trader
-	logger zerolog.Logger
-	config AnalyzerConfig
+	trader       *wstrader.Trader
+	logger       zerolog.Logger
+	config       AnalyzerConfig
+	lastSignals  map[string]time.Time // Track last signal time per asset
+	signalsMu    sync.RWMutex
 }
 
 // AnalyzerConfig contains strategy parameters
@@ -27,6 +30,7 @@ type AnalyzerConfig struct {
 	MinConfidence    float64 // Minimum confidence to generate signal (default: 0.65)
 	ExpiryMinutes    int     // Trade expiry in minutes (default: 2)
 	EnableMartingale bool    // Enable martingale levels (default: true)
+	SignalCooldown   int     // Cooldown between signals for same asset in minutes (default: 7)
 }
 
 // DefaultConfig returns default analyzer configuration
@@ -40,20 +44,40 @@ func DefaultConfig() AnalyzerConfig {
 		MinConfidence:    0.65,
 		ExpiryMinutes:    2,
 		EnableMartingale: true,
+		SignalCooldown:   7, // 7 minutes between signals for same asset
 	}
 }
 
 // New creates a new signal analyzer
 func New(trader *wstrader.Trader, logger zerolog.Logger, config AnalyzerConfig) *SignalAnalyzer {
 	return &SignalAnalyzer{
-		trader: trader,
-		logger: logger,
-		config: config,
+		trader:      trader,
+		logger:      logger,
+		config:      config,
+		lastSignals: make(map[string]time.Time),
 	}
 }
 
 // AnalyzeAsset analyzes an asset and generates a signal if conditions are met
 func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
+	// Check cooldown - don't generate signal if one was sent recently for this asset
+	a.signalsMu.RLock()
+	lastSignalTime, exists := a.lastSignals[asset]
+	a.signalsMu.RUnlock()
+
+	if exists {
+		cooldownDuration := time.Duration(a.config.SignalCooldown) * time.Minute
+		timeSinceLastSignal := time.Since(lastSignalTime)
+		if timeSinceLastSignal < cooldownDuration {
+			a.logger.Debug().
+				Str("asset", asset).
+				Dur("time_since_last", timeSinceLastSignal).
+				Dur("cooldown", cooldownDuration).
+				Msg("Signal suppressed (cooldown active)")
+			return nil, nil // No signal during cooldown
+		}
+	}
+
 	// Fetch recent candles (60 seconds = 1 minute candles)
 	candles, err := a.trader.GetHistoricalCandles(asset, 60, 50)
 	if err != nil {
@@ -169,6 +193,11 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		Str("reason", reason).
 		Time("entry", entryWindow).
 		Msg("🎯 SIGNAL GENERATED")
+
+	// Update last signal time for this asset
+	a.signalsMu.Lock()
+	a.lastSignals[asset] = time.Now()
+	a.signalsMu.Unlock()
 
 	return signal, nil
 }

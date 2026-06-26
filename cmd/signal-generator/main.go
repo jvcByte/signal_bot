@@ -134,31 +134,25 @@ func formatSignalMessage(signal *models.Signal) string {
 		direction = "SELL"
 	}
 
-	directionEmoji := "🟢"
-	if signal.Direction == models.DirectionPut {
-		directionEmoji = "🔴"
-	}
-
 	msg := fmt.Sprintf(`MEXY BINARY
 
 🚨 TRADE NOW!!
 
-📊 %s (OTC)
-🕒 Timeframe: %d-min expiry
-🤖 AI Confidence: %.0f%%
-🕰️ Entry Window: %s
-Direction: %s %s`,
+%s (OTC)
+Timeframe: %d-min expiry
+AI Confidence: %.0f%%
+Entry Window: %s
+Direction: %s`,
 		signal.Asset,
 		signal.Expiry,
 		signal.Confidence*100,
 		signal.EntryWindow.Format("3:04 PM"),
-		directionEmoji,
 		direction,
 	)
 
 	// Add martingale levels if present
 	if len(signal.MartingaleLevels) > 0 {
-		msg += "\n\n📊 Martingale Levels:"
+		msg += "\n\nMartingale Levels:"
 		for _, ml := range signal.MartingaleLevels {
 			msg += fmt.Sprintf("\n• Level %d → %s", ml.Level, ml.Time.Format("3:04 PM"))
 		}

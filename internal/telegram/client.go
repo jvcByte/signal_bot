@@ -547,35 +547,65 @@ func (c *Client) SendMessage(ctx context.Context, channelID int64, message strin
 		return fmt.Errorf("telegram client not connected")
 	}
 
-	// Resolve channel
-	inputPeer := &tg.InputPeerChannel{
-		ChannelID: channelID,
+	// Convert channel ID to input peer
+	// Negative channel IDs need to be converted: -1003488226342 → 3488226342
+	actualChannelID := channelID
+	if channelID < 0 {
+		// Remove the -100 prefix
+		actualChannelID = -channelID - 1000000000000
 	}
 
-	// Get full channel info to get access hash
-	channels, err := c.api.ChannelsGetChannels(ctx, []tg.InputChannelClass{
-		&tg.InputChannel{ChannelID: channelID},
+	// First, get the channel to obtain access hash
+	dialogs, err := c.api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+		OffsetPeer: &tg.InputPeerEmpty{}, // Required field
+		Limit:      100,
 	})
 	if err != nil {
-		return fmt.Errorf("get channel: %w", err)
+		return fmt.Errorf("get dialogs: %w", err)
 	}
 
-	chats := channels.GetChats()
-	if len(chats) == 0 {
-		return fmt.Errorf("channel not found")
+	var accessHash int64
+	var found bool
+
+	// Extract chats from dialogs
+	switch d := dialogs.(type) {
+	case *tg.MessagesDialogs:
+		for _, chat := range d.Chats {
+			if channel, ok := chat.(*tg.Channel); ok {
+				if channel.ID == actualChannelID {
+					accessHash = channel.AccessHash
+					found = true
+					break
+				}
+			}
+		}
+	case *tg.MessagesDialogsSlice:
+		for _, chat := range d.Chats {
+			if channel, ok := chat.(*tg.Channel); ok {
+				if channel.ID == actualChannelID {
+					accessHash = channel.AccessHash
+					found = true
+					break
+				}
+			}
+		}
 	}
 
-	channel, ok := chats[0].(*tg.Channel)
-	if !ok {
-		return fmt.Errorf("not a channel")
+	if !found {
+		return fmt.Errorf("channel %d not found in dialogs (raw: %d)", actualChannelID, channelID)
 	}
 
-	inputPeer.AccessHash = channel.AccessHash
+	// Create input peer with access hash
+	inputPeer := &tg.InputPeerChannel{
+		ChannelID:  actualChannelID,
+		AccessHash: accessHash,
+	}
 
 	// Send message
 	_, err = c.api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
-		Peer:    inputPeer,
-		Message: message,
+		Peer:     inputPeer,
+		Message:  message,
+		RandomID: time.Now().UnixNano(), // Required unique ID for deduplication
 	})
 
 	if err != nil {

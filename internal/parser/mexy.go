@@ -42,7 +42,7 @@ func ParseMexyDetailed(text string) (*MexySignal, error) {
 	}
 
 	// Extract timeframe (handle emoji clock)
-	timeframeRegex := regexp.MustCompile(`(?i)(?:🕒)?\s*timeframe:\s*(\d+)-min`)
+	timeframeRegex := regexp.MustCompile(`(?i)(?:🕒\s*)?timeframe:\s*(\d+)-min`)
 	if matches := timeframeRegex.FindStringSubmatch(text); matches != nil {
 		expiry, _ := strconv.Atoi(matches[1])
 		signal.Expiry = expiry
@@ -51,7 +51,7 @@ func ParseMexyDetailed(text string) (*MexySignal, error) {
 	}
 
 	// Extract AI confidence (handle emoji robot)
-	confidenceRegex := regexp.MustCompile(`(?i)(?:🤖)?\s*ai\s*confidence:\s*(\d+)%`)
+	confidenceRegex := regexp.MustCompile(`(?i)(?:🤖\s*)?ai\s*confidence:\s*(\d+)%`)
 	if matches := confidenceRegex.FindStringSubmatch(text); matches != nil {
 		conf, _ := strconv.Atoi(matches[1])
 		signal.Confidence = float64(conf) / 100.0
@@ -73,7 +73,7 @@ func ParseMexyDetailed(text string) (*MexySignal, error) {
 	}
 
 	// Extract entry window (optional, handle emoji clock)
-	entryRegex := regexp.MustCompile(`(?i)(?:🕰️)?\s*entry\s*window:\s*(\d{1,2}):(\d{2})\s*(AM|PM)`)
+	entryRegex := regexp.MustCompile(`(?i)(?:🕰️\s*)?entry\s*window:\s*(\d{1,2}):(\d{2})\s*(AM|PM)`)
 	if matches := entryRegex.FindStringSubmatch(text); matches != nil {
 		hour, _ := strconv.Atoi(matches[1])
 		minute, _ := strconv.Atoi(matches[2])
