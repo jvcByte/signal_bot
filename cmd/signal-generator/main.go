@@ -87,8 +87,24 @@ func main() {
 		intervalSec = 60
 	}
 
+	// Pre-validate assets - check which ones actually exist in IQ Option
+	logger.Info().Msg("→ Validating assets against IQ Option...")
+	validAssets := make([]string, 0, len(assetList))
+	for _, asset := range assetList {
+		_, _, _, found := trader.GetActiveIDFromAPI(asset)
+		if found {
+			validAssets = append(validAssets, asset)
+		} else {
+			logger.Warn().Str("asset", asset).Msg("⚠️  Asset not available in IQ Option - skipping")
+		}
+	}
+
+	if len(validAssets) == 0 {
+		log.Fatalf("No valid assets found!")
+	}
+
 	logger.Info().
-		Strs("assets", assetList).
+		Strs("assets", validAssets).
 		Int("interval_sec", intervalSec).
 		Int("signal_threshold", analyzerCfg.SignalThreshold).
 		Int("signal_cooldown_min", analyzerCfg.SignalCooldown).
@@ -109,7 +125,7 @@ func main() {
 	for {
 		select {
 		case <-ticker.C:
-			analyzeAndSendSignals(ctx, an, tg, assetList, logger, cfg.Telegram.ChannelID)
+			analyzeAndSendSignals(ctx, an, tg, validAssets, logger, cfg.Telegram.ChannelID)
 
 		case <-sigChan:
 			logger.Info().Msg("Shutting down signal generator...")

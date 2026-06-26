@@ -112,7 +112,10 @@ func (t *Trader) getActiveIDFromAPI(assetName string) (int, string, bool, bool) 
 }
 
 
-// ListAllAssets returns all available assets from the cache (fetches if empty)
+// GetActiveIDFromAPI is the public wrapper for asset lookup
+func (t *Trader) GetActiveIDFromAPI(assetName string) (int, string, bool, bool) {
+	return t.getActiveIDFromAPI(assetName)
+}
 func (t *Trader) ListAllAssets() (map[string]int, error) {
 	t.assetCacheMu.RLock()
 	cacheSize := len(t.assetCache)
@@ -135,3 +138,5 @@ func (t *Trader) ListAllAssets() (map[string]int, error) {
 	
 	return result, nil
 }
+
+// ListAllAssets returns all available assets from the cache (fetches if empty)
