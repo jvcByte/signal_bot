@@ -130,30 +130,42 @@ func analyzeAndSendSignals(ctx context.Context, an *analyzer.SignalAnalyzer, tg 
 
 func formatSignalMessage(signal *models.Signal) string {
 	direction := "BUY"
+	directionEmoji := "🟢"
+	assetArrow := "📈"
 	if signal.Direction == models.DirectionPut {
 		direction = "SELL"
+		directionEmoji = "🔴"
+		assetArrow = "📉"
 	}
 
-	msg := fmt.Sprintf(`MEXY BINARY
-TRADE NOW!!
-%s (OTC)
-Timeframe: %d-min expiry
-AI Confidence: %.0f%%
-Entry Window: %s
-Direction: %s`,
-		signal.Asset,
+	// Format asset as XXX/YYY
+	asset := signal.Asset
+	if len(asset) == 6 {
+		asset = asset[:3] + "/" + asset[3:]
+	}
+
+	msg := fmt.Sprintf(`JVCBYTE BLITZ
+
+🚨 TRADE NOW!!
+
+%s  %s (OTC)
+🕒  Timeframe: %d-min expiry
+🤖  AI Confidence: %.0f%%
+🕰️  Entry Window: %s
+Direction: %s %s
+
+📊  Martingale Levels:`,
+		assetArrow,
+		asset,
 		signal.Expiry,
 		signal.Confidence*100,
 		signal.EntryWindow.Format("3:04 PM"),
+		directionEmoji,
 		direction,
 	)
 
-	// Add martingale levels if present
-	if len(signal.MartingaleLevels) > 0 {
-		msg += "\nMartingale Levels:"
-		for _, ml := range signal.MartingaleLevels {
-			msg += fmt.Sprintf("\n• Level %d → %s", ml.Level, ml.Time.Format("3:04 PM"))
-		}
+	for _, ml := range signal.MartingaleLevels {
+		msg += fmt.Sprintf("\n• Level %d  →  %s", ml.Level, ml.Time.Format("3:04 PM"))
 	}
 
 	return msg

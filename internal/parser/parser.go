@@ -33,13 +33,13 @@ func New() *Parser {
 func (p *Parser) Parse(text string) (*models.Signal, error) {
 	text = strings.TrimSpace(text)
 	
-	// First try the detailed Mexy parser (handles full format with emojis)
-	if strings.Contains(strings.ToUpper(text), "MEXY") || 
-	   (strings.Contains(strings.ToUpper(text), "TIMEFRAME") && strings.Contains(strings.ToUpper(text), "CONFIDENCE")) {
+	// Try the detailed Mexy parser for both MEXY BINARY and JVCBYTE BLITZ formats
+	textUpper := strings.ToUpper(text)
+	if strings.Contains(textUpper, "MEXY") || strings.Contains(textUpper, "JVCBYTE") ||
+	   (strings.Contains(textUpper, "TIMEFRAME") && strings.Contains(textUpper, "CONFIDENCE")) {
 		mexySignal, err := ParseMexyDetailed(text)
 		if err == nil {
 			mexySignal.Signal.EntryWindow = mexySignal.EntryWindow
-			// Copy martingale levels into base signal
 			for _, ml := range mexySignal.MartingaleLevels {
 				mexySignal.Signal.MartingaleLevels = append(mexySignal.Signal.MartingaleLevels, models.MartingaleTime{
 					Level: ml.Level,
@@ -51,9 +51,8 @@ func (p *Parser) Parse(text string) (*models.Signal, error) {
 	}
 	
 	// Fall back to simple pattern matching
-	textUpper := strings.ToUpper(text)
 	for _, pattern := range p.patterns {
-		if matches := pattern.regex.FindStringSubmatch(textUpper); matches != nil {
+		if matches := pattern.regex.FindStringSubmatch(strings.ToUpper(text)); matches != nil {
 			signal, err := pattern.extractor(matches)
 			if err != nil {
 				continue
@@ -61,7 +60,7 @@ func (p *Parser) Parse(text string) (*models.Signal, error) {
 			signal.Raw = text
 			signal.ReceivedAt = time.Now()
 			if signal.Confidence == 0 {
-				signal.Confidence = 0.8 // default if not specified
+				signal.Confidence = 0.8
 			}
 			return signal, nil
 		}

@@ -33,34 +33,48 @@ func ParseMexyDetailed(text string) (*MexySignal, error) {
 		MartingaleLevels: []MartingaleLevel{},
 	}
 
-	// Extract asset (handle emoji flags around currency pairs)
-	assetRegex := regexp.MustCompile(`(?:📈|📉|🇨🇦|🇯🇵|🇺🇸|🇪🇺|🇬🇧|🇦🇺|🇳🇿|🇨🇭)?\s*([A-Z]{3}/[A-Z]{3})\s*(?:🇨🇦|🇯🇵|🇺🇸|🇪🇺|🇬🇧|🇦🇺|🇳🇿|🇨🇭)?\s*(?:\(OTC\))?`)
+	// Extract asset - handles: "📉  GBP/JPY (OTC)", "📉  🇬🇧 GBP/JPY 🇯🇵 (OTC)", "AUDUSD (OTC)"
+	assetRegex := regexp.MustCompile(`(?:📈|📉)\s+(?:[^\s]+\s+)?([A-Z]{3}/[A-Z]{3})`)
 	if matches := assetRegex.FindStringSubmatch(text); matches != nil {
 		signal.Asset = normalizeAsset(matches[1])
 	} else {
-		return nil, fmt.Errorf("asset not found")
+		// fallback: plain asset without emoji
+		assetRegex2 := regexp.MustCompile(`([A-Z]{3}/[A-Z]{3})\s*(?:\(OTC\))?`)
+		if matches := assetRegex2.FindStringSubmatch(text); matches != nil {
+			signal.Asset = normalizeAsset(matches[1])
+		} else {
+			return nil, fmt.Errorf("asset not found")
+		}
 	}
 
-	// Extract timeframe (handle emoji clock)
-	timeframeRegex := regexp.MustCompile(`(?i)(?:🕒\s*)?timeframe:\s*(\d+)-min`)
+	// Extract timeframe
+	timeframeRegex := regexp.MustCompile(`(?i)🕒\s+timeframe:\s*(\d+)-min|timeframe:\s*(\d+)-min`)
 	if matches := timeframeRegex.FindStringSubmatch(text); matches != nil {
-		expiry, _ := strconv.Atoi(matches[1])
+		val := matches[1]
+		if val == "" {
+			val = matches[2]
+		}
+		expiry, _ := strconv.Atoi(val)
 		signal.Expiry = expiry
 	} else {
 		return nil, fmt.Errorf("timeframe not found")
 	}
 
-	// Extract AI confidence (handle emoji robot)
-	confidenceRegex := regexp.MustCompile(`(?i)(?:🤖\s*)?ai\s*confidence:\s*(\d+)%`)
+	// Extract AI confidence
+	confidenceRegex := regexp.MustCompile(`(?i)🤖\s+ai\s*confidence:\s*(\d+)%|ai\s*confidence:\s*(\d+)%`)
 	if matches := confidenceRegex.FindStringSubmatch(text); matches != nil {
-		conf, _ := strconv.Atoi(matches[1])
+		val := matches[1]
+		if val == "" {
+			val = matches[2]
+		}
+		conf, _ := strconv.Atoi(val)
 		signal.Confidence = float64(conf) / 100.0
 	} else {
-		signal.Confidence = 0.8 // default
+		signal.Confidence = 0.8
 	}
 
-	// Extract direction (handle emojis before direction word)
-	directionRegex := regexp.MustCompile(`(?i)direction:\s*(?:🟢|🔴|📈|📉)?\s*(BUY|SELL|CALL|PUT)`)
+	// Extract direction
+	directionRegex := regexp.MustCompile(`(?i)direction:\s*(?:🟢|🔴)?\s*(BUY|SELL|CALL|PUT)`)
 	if matches := directionRegex.FindStringSubmatch(text); matches != nil {
 		dirStr := strings.ToUpper(matches[1])
 		if dirStr == "SELL" || dirStr == "PUT" {
@@ -72,8 +86,8 @@ func ParseMexyDetailed(text string) (*MexySignal, error) {
 		return nil, fmt.Errorf("direction not found")
 	}
 
-	// Extract entry window (optional, handle emoji clock)
-	entryRegex := regexp.MustCompile(`(?i)(?:🕰️\s*)?entry\s*window:\s*(\d{1,2}):(\d{2})\s*(AM|PM)`)
+	// Extract entry window
+	entryRegex := regexp.MustCompile(`(?i)(?:🕰️\s+)?entry\s*window:\s*(\d{1,2}):(\d{2})\s*(AM|PM)`)
 	if matches := entryRegex.FindStringSubmatch(text); matches != nil {
 		hour, _ := strconv.Atoi(matches[1])
 		minute, _ := strconv.Atoi(matches[2])
@@ -94,7 +108,7 @@ func ParseMexyDetailed(text string) (*MexySignal, error) {
 		}
 	}
 
-	// Extract martingale levels (optional)
+	// Extract martingale levels - handles "→  11:17 AM" and "→ 11:17 AM"
 	martingaleRegex := regexp.MustCompile(`(?i)level\s*(\d+)\s*→\s*(\d{1,2}):(\d{2})\s*(AM|PM)`)
 	for _, matches := range martingaleRegex.FindAllStringSubmatch(text, -1) {
 		level, _ := strconv.Atoi(matches[1])
