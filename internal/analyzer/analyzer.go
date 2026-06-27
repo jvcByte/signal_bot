@@ -175,22 +175,35 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		direction = models.DirectionPut
 	}
 
-	// ── Step 5: Estimate confidence via ConfidenceModel
+	// ── Step 5: Estimate confidence
 	confidence := a.confidence.Estimate(result.Score, fv.Regime, fv)
+	calibrated := a.confidence.IsCalibrated(result.Score, fv.Regime)
 
-	// Fallback: use calibrated tier stats if the model has no regime history yet
-	scoreTier := int(absScore)
-	if stats, ok := a.config.ScoreTierMap[scoreTier]; ok && stats.Trades >= 30 {
-		// Blend calibrated win-rate with model estimate (weight calibrated higher)
-		confidence = 0.4*confidence + 0.6*stats.WinRate
-		a.logger.Debug().
-			Int("tier", scoreTier).
-			Float64("calibrated_wr", stats.WinRate).
-			Float64("blended", confidence).
-			Int("sample_size", stats.Trades).
-			Msg("Blended calibrated confidence")
+	// If not calibrated, fall back to backtest ScoreTierMap
+	if !calibrated {
+		scoreTier := int(absScore)
+		if stats, ok := a.config.ScoreTierMap[scoreTier]; ok && stats.Trades >= 20 {
+			confidence = stats.WinRate
+			calibrated = true
+			a.logger.Debug().
+				Int("tier", scoreTier).
+				Float64("backtest_wr", stats.WinRate).
+				Msg("Using backtest-calibrated confidence")
+		}
 	}
 
+	// Still no data - use a conservative estimate and flag it
+	if !calibrated {
+		// Conservative formula: score / theoretical max, floored at 60%
+		maxScore := 15.5 // approximate max weighted score
+		confidence = 0.60 + (absScore/maxScore)*0.10 // 60-70% range only
+		a.logger.Debug().
+			Str("asset", asset).
+			Float64("confidence", confidence).
+			Msg("⚠️  Confidence is UNVALIDATED (run backtest to calibrate)")
+	}
+
+	// Enforce minimum
 	if confidence < a.config.MinConfidence {
 		return nil, nil
 	}
@@ -224,6 +237,7 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		Str("regime", fv.Regime.String()).
 		Str("direction", direction.String()).
 		Float64("confidence", confidence).
+		Bool("calibrated", calibrated).
 		Float64("score", result.Score).
 		Float64("adx", result.Meta.ADX).
 		Float64("ema_dist", fv.EMADist).
@@ -251,4 +265,14 @@ func extractField(candles []wstrader.Candle, fn func(wstrader.Candle) float64) [
 		out[i] = fn(c)
 	}
 	return out
+}
+
+// LoadConfidenceModel loads a previously calibrated confidence model from disk.
+func (a *SignalAnalyzer) LoadConfidenceModel(path string) error {
+	return a.confidence.LoadFromFile(path)
+}
+
+// SaveConfidenceModel persists the current confidence model to disk.
+func (a *SignalAnalyzer) SaveConfidenceModel(path string) error {
+	return a.confidence.SaveToFile(path)
 }

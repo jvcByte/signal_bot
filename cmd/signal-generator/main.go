@@ -75,6 +75,15 @@ func main() {
 	}
 	an := analyzer.New(trader, logger, analyzerCfg)
 
+	// Load calibrated confidence model if it exists
+	confidencePath := "data/confidence.json"
+	if err := an.LoadConfidenceModel(confidencePath); err != nil {
+		logger.Warn().Msg("⚠️  No calibrated confidence model found - signals will use conservative estimates")
+		logger.Warn().Msg("   Run: go run cmd/calibrate/main.go to calibrate")
+	} else {
+		logger.Info().Str("path", confidencePath).Msg("✓ Calibrated confidence model loaded")
+	}
+
 	// Asset list from config (fallback to defaults)
 	assetList := cfg.Analyzer.Assets
 	if len(assetList) == 0 {

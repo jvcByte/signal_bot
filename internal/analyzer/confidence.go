@@ -32,48 +32,50 @@ func NewConfidenceModel() *ConfidenceModel {
 
 // Estimate returns a calibrated probability in (0, 0.95].
 //
-// The estimate is formed by:
-//  1. Base win-rate from regime+tier history (or 0.60 if no data)
-//  2. ATR% quality adjustment (very low ATR → hard to win binary options)
-//  3. Score strength adjustment (higher abs score → more conviction)
-//  4. Hard cap at 0.95
+// Priority:
+//  1. If regime+tier has ≥20 historical trades → use real win rate
+//  2. Otherwise return 0 (uncalibrated) so caller knows it's not validated
+//
+// The caller should display this honestly to the user.
 func (m *ConfidenceModel) Estimate(score float64, regime Regime, features FeatureVector) float64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	tier := int(math.Abs(score))
 
-	// 1. Base win-rate
-	base := 0.60
+	// Use real historical win rate if we have enough data
 	if tiers, ok := m.RegimeStats[regime]; ok {
 		if ts, ok2 := tiers[tier]; ok2 && ts.Trades >= 20 {
-			base = ts.WinRate
+			conf := ts.WinRate
+
+			// Small ATR quality adjustment (±3-8%)
+			if features.ATRPct < 0.05 {
+				conf -= 0.05
+			} else if features.ATRPct > 0.15 && features.ATRPct < 0.4 {
+				conf += 0.03
+			}
+
+			if conf > 0.95 { conf = 0.95 }
+			if conf < 0.10 { conf = 0.10 }
+			return conf
 		}
 	}
 
-	// 2. Volatility quality: low ATR% is bad for binary options (price doesn't move)
-	atrAdj := 0.0
-	if features.ATRPct < 0.05 {
-		atrAdj = -0.08 // very flat market, bad for binary options
-	} else if features.ATRPct > 0.15 && features.ATRPct < 0.4 {
-		atrAdj = +0.03 // sweet spot
-	}
+	// No calibrated data yet - return 0 to signal "not validated"
+	return 0
+}
 
-	// 3. Score strength: more agreement → higher confidence
-	maxScore := weightRSIExtreme + weightStoch + weightEMACross + weightADX + weightBB + weightMACD + weightEngulfing + weightPinBar + weightMTF5m + weightMTF15m
-	absScore := math.Abs(score)
-	scoreAdj := (absScore/maxScore)*0.15 // up to +15%
-
-	conf := base + atrAdj + scoreAdj
-
-	// 4. Cap
-	if conf > 0.95 {
-		conf = 0.95
+// IsCalibrated returns true if the model has enough data to make a reliable estimate
+func (m *ConfidenceModel) IsCalibrated(score float64, regime Regime) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	tier := int(math.Abs(score))
+	if tiers, ok := m.RegimeStats[regime]; ok {
+		if ts, ok2 := tiers[tier]; ok2 {
+			return ts.Trades >= 20
+		}
 	}
-	if conf < 0.10 {
-		conf = 0.10
-	}
-	return conf
+	return false
 }
 
 // Update performs an online Bayesian update for the given regime+tier pair.
