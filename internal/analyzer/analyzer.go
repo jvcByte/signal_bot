@@ -17,6 +17,7 @@ type SignalAnalyzer struct {
 	config      AnalyzerConfig
 	lastSignals map[string]time.Time
 	signalsMu   sync.RWMutex
+	confidence  *ConfidenceModel
 }
 
 // AnalyzerConfig contains strategy parameters
@@ -61,7 +62,7 @@ func DefaultConfig() AnalyzerConfig {
 		ExpiryMinutes:    2,
 		EnableMartingale: true,
 		SignalCooldown:   7,
-		SignalThreshold:  3.5, // weighted score threshold
+		SignalThreshold:  3.5,
 		BBPeriod:         20,
 		BBStdDev:         2.0,
 		VolumePeriod:     14,
@@ -78,6 +79,7 @@ func New(trader *wstrader.Trader, logger zerolog.Logger, config AnalyzerConfig) 
 		logger:      logger,
 		config:      config,
 		lastSignals: make(map[string]time.Time),
+		confidence:  NewConfidenceModel(),
 	}
 }
 
@@ -114,7 +116,23 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		Candles15m: candles15m,
 	}
 
-	result := ComputeWeightedScore(input, a.config)
+	// ── Step 1: Extract feature vector (includes regime detection)
+	fv := ExtractFeatures(input, a.config)
+
+	// ── Step 2: Skip if regime is not tradeable
+	if !fv.Regime.IsTradeable() {
+		a.logger.Debug().
+			Str("asset", asset).
+			Str("regime", fv.Regime.String()).
+			Float64("adx", fv.ADX).
+			Float64("atr_pct", fv.ATRPct).
+			Float64("bb_width", fv.BBWidth).
+			Msg("⏭  Skipping — regime not tradeable")
+		return nil, nil
+	}
+
+	// ── Step 3: Compute score with regime-aware weights
+	result := ComputeWeightedScore(input, a.config, &fv)
 
 	absScore := result.Score
 	if absScore < 0 {
@@ -123,12 +141,16 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 
 	a.logger.Info().
 		Str("asset", asset).
+		Str("regime", fv.Regime.String()).
 		Float64("score", result.Score).
 		Float64("abs_score", absScore).
 		Float64("threshold", a.config.SignalThreshold).
 		Float64("rsi", result.Meta.RSI).
 		Float64("adx", result.Meta.ADX).
 		Float64("stoch_k", result.Meta.StochK).
+		Float64("ema_dist", fv.EMADist).
+		Float64("atr_pct", fv.ATRPct).
+		Float64("bb_width", fv.BBWidth).
 		Strs("factors", result.Reasons).
 		Msg("  ↳ Analysis")
 
@@ -144,23 +166,20 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		direction = models.DirectionPut
 	}
 
-	// Confidence: use calibrated win rate if available, else formula
+	// ── Step 4: Estimate confidence via ConfidenceModel
+	confidence := a.confidence.Estimate(result.Score, fv.Regime, fv)
+
+	// Fallback: use calibrated tier stats if the model has no regime history yet
 	scoreTier := int(absScore)
-	confidence := 0.0
 	if stats, ok := a.config.ScoreTierMap[scoreTier]; ok && stats.Trades >= 30 {
-		confidence = stats.WinRate
+		// Blend calibrated win-rate with model estimate (weight calibrated higher)
+		confidence = 0.4*confidence + 0.6*stats.WinRate
 		a.logger.Debug().
 			Int("tier", scoreTier).
 			Float64("calibrated_wr", stats.WinRate).
+			Float64("blended", confidence).
 			Int("sample_size", stats.Trades).
-			Msg("Using calibrated confidence")
-	} else {
-		// Formula fallback: 60%-90% range based on score
-		maxScore := weightRSIExtreme + weightStoch + weightEMACross + weightADX + weightBB + weightMACD + weightEngulfing + weightPinBar + weightMTF5m + weightMTF15m
-		confidence = 0.60 + (absScore/maxScore)*0.30
-		if confidence > 0.95 {
-			confidence = 0.95
-		}
+			Msg("Blended calibrated confidence")
 	}
 
 	if confidence < a.config.MinConfidence {
@@ -189,10 +208,12 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 
 	a.logger.Info().
 		Str("asset", asset).
+		Str("regime", fv.Regime.String()).
 		Str("direction", direction.String()).
 		Float64("confidence", confidence).
 		Float64("score", result.Score).
 		Float64("adx", result.Meta.ADX).
+		Float64("ema_dist", fv.EMADist).
 		Strs("reasons", result.Reasons).
 		Msg("🎯 SIGNAL GENERATED")
 
@@ -201,6 +222,12 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 	a.signalsMu.Unlock()
 
 	return signal, nil
+}
+
+// RecordOutcome updates the online confidence model with the result of a trade.
+// Call this after each trade settles.
+func (a *SignalAnalyzer) RecordOutcome(score float64, regime Regime, won bool) {
+	a.confidence.Update(score, regime, won)
 }
 
 // extractField is a helper to pull a single field from candle slices

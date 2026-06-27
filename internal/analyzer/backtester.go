@@ -2,12 +2,27 @@ package analyzer
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/rs/zerolog"
 	"signal-bot/internal/wstrader"
 	"signal-bot/pkg/models"
 )
+
+// RegimeStats holds win/loss counts for a specific market regime
+type RegimeStats struct {
+	Trades  int
+	Wins    int
+	WinRate float64
+}
+
+// HourStats holds win/loss counts for a specific UTC hour (0-23)
+type HourStats struct {
+	Trades  int
+	Wins    int
+	WinRate float64
+}
 
 // BacktestResult holds performance metrics
 type BacktestResult struct {
@@ -20,14 +35,30 @@ type BacktestResult struct {
 	MaxDrawdown float64
 	StartTime   time.Time
 	EndTime     time.Time
+
+	// Extended metrics
+	ProfitFactor    float64 // gross profit / gross loss
+	Expectancy      float64 // average P&L per trade
+	AvgWin          float64
+	AvgLoss         float64
+	MaxConsecWins   int
+	MaxConsecLosses int
+	SharpeRatio     float64
+
+	// Breakdown
+	ByRegime map[Regime]RegimeStats
+	ByHour   map[int]HourStats // UTC hour 0-23
+
 	// Per score tier stats (for confidence calibration)
-	ScoreTiers  map[int]ScoreTierStats
+	ScoreTiers map[int]ScoreTierStats
 }
 
 func (r BacktestResult) String() string {
 	return fmt.Sprintf(
-		"Asset: %s | Trades: %d | Wins: %d | Losses: %d | WinRate: %.1f%% | Profit: $%.2f | MaxDD: $%.2f",
-		r.Asset, r.TotalTrades, r.Wins, r.Losses, r.WinRate*100, r.TotalProfit, r.MaxDrawdown,
+		"Asset: %s | Trades: %d | Wins: %d | Losses: %d | WinRate: %.1f%% | Profit: $%.2f | MaxDD: $%.2f | PF: %.2f | Expect: $%.3f | Sharpe: %.2f",
+		r.Asset, r.TotalTrades, r.Wins, r.Losses, r.WinRate*100,
+		r.TotalProfit, r.MaxDrawdown,
+		r.ProfitFactor, r.Expectancy, r.SharpeRatio,
 	)
 }
 
@@ -45,6 +76,8 @@ func BacktestAsset(
 	result := BacktestResult{
 		Asset:      asset,
 		ScoreTiers: make(map[int]ScoreTierStats),
+		ByRegime:   make(map[Regime]RegimeStats),
+		ByHour:     make(map[int]HourStats),
 	}
 
 	if len(candles) < 2 {
@@ -57,9 +90,33 @@ func BacktestAsset(
 	const stake = 1.0
 	const payout = 0.87
 
-	equity := 0.0
-	peak   := 0.0
-	maxDD  := 0.0
+	equity    := 0.0
+	peak      := 0.0
+	maxDD     := 0.0
+	grossWin  := 0.0
+	grossLoss := 0.0
+	sumWins   := 0.0
+	sumLosses := 0.0
+
+	// For Sharpe: track per-trade P&L
+	plSeries := make([]float64, 0, 128)
+
+	// Consecutive streak tracking
+	streak          := 0
+	maxConsecWins   := 0
+	maxConsecLosses := 0
+
+	// Per-tier win tracking
+	tierWins   := make(map[int]int)
+	tierTrades := make(map[int]int)
+
+	// Per-regime win tracking
+	regimeWins   := make(map[Regime]int)
+	regimeTrades := make(map[Regime]int)
+
+	// Per-hour win tracking
+	hourWins   := make(map[int]int)
+	hourTrades := make(map[int]int)
 
 	minCandles := cfg.SlowMAPeriod + cfg.BBPeriod + 30
 	if len(candles) < minCandles+expiryMinutes {
@@ -82,7 +139,15 @@ func BacktestAsset(
 			Candles15m: candles15m,
 		}
 
-		out := ComputeWeightedScore(input, cfg)
+		// Extract features first (regime detection)
+		fv := ExtractFeatures(input, cfg)
+
+		// Skip non-tradeable regimes
+		if !fv.Regime.IsTradeable() {
+			continue
+		}
+
+		out := ComputeWeightedScore(input, cfg, &fv)
 
 		absScore := out.Score
 		if absScore < 0 {
@@ -101,6 +166,7 @@ func BacktestAsset(
 
 		entryPrice := input.Closes[len(input.Closes)-1]
 		exitPrice  := candles[i+expiryMinutes].Close
+		entryTime  := candles[i].Time
 
 		var win bool
 		if direction == models.DirectionCall {
@@ -111,17 +177,50 @@ func BacktestAsset(
 
 		result.TotalTrades++
 		tier := int(absScore)
-		ts := result.ScoreTiers[tier]
-		ts.Trades++
+		tierTrades[tier]++
+
+		regime := fv.Regime
+		regimeTrades[regime]++
+
+		hour := entryTime.UTC().Hour()
+		hourTrades[hour]++
+
+		var tradePL float64
 		if win {
 			result.Wins++
-			equity += stake * payout
-			ts.WinRate = float64(ts.Trades-1)/float64(ts.Trades)*ts.WinRate + payout/float64(ts.Trades)
+			tradePL = stake * payout
+			equity += tradePL
+			grossWin += tradePL
+			sumWins  += tradePL
+			tierWins[tier]++
+			regimeWins[regime]++
+			hourWins[hour]++
+			// streak
+			if streak >= 0 {
+				streak++
+			} else {
+				streak = 1
+			}
+			if streak > maxConsecWins {
+				maxConsecWins = streak
+			}
 		} else {
 			result.Losses++
-			equity -= stake
+			tradePL = -stake
+			equity += tradePL
+			grossLoss += stake
+			sumLosses += stake
+			// streak
+			if streak <= 0 {
+				streak--
+			} else {
+				streak = -1
+			}
+			if -streak > maxConsecLosses {
+				maxConsecLosses = -streak
+			}
 		}
-		result.ScoreTiers[tier] = ts
+		plSeries = append(plSeries, tradePL)
 
 		if equity > peak {
 			peak = equity
@@ -131,23 +230,93 @@ func BacktestAsset(
 		}
 	}
 
-	// Compute final win rates per tier
-	for tier, ts := range result.ScoreTiers {
-		wins := 0
-		// Recount (simplified - approximation since we didn't store per-tier wins separately)
-		// For exact per-tier win rates, the caller should use CalibrateFromBacktest
-		_ = wins
-		_ = tier
-		_ = ts
-	}
-
+	// ── Aggregate scalar metrics
 	if result.TotalTrades > 0 {
 		result.WinRate = float64(result.Wins) / float64(result.TotalTrades)
 	}
-	result.TotalProfit = equity
-	result.MaxDrawdown = maxDD
+	result.TotalProfit  = equity
+	result.MaxDrawdown  = maxDD
+	result.MaxConsecWins   = maxConsecWins
+	result.MaxConsecLosses = maxConsecLosses
+
+	if result.Wins > 0 {
+		result.AvgWin = sumWins / float64(result.Wins)
+	}
+	if result.Losses > 0 {
+		result.AvgLoss = sumLosses / float64(result.Losses)
+	}
+	if grossLoss > 0 {
+		result.ProfitFactor = grossWin / grossLoss
+	}
+	if result.TotalTrades > 0 {
+		result.Expectancy = equity / float64(result.TotalTrades)
+	}
+
+	// Sharpe ratio (annualised assuming 1m candles, ~525,600 bars/year)
+	result.SharpeRatio = sharpeRatio(plSeries)
+
+	// ── Per-tier stats
+	for tier, trades := range tierTrades {
+		wins := tierWins[tier]
+		wr := 0.0
+		if trades > 0 {
+			wr = float64(wins) / float64(trades)
+		}
+		result.ScoreTiers[tier] = ScoreTierStats{WinRate: wr, Trades: trades}
+	}
+
+	// ── Per-regime stats
+	for regime, trades := range regimeTrades {
+		wins := regimeWins[regime]
+		wr := 0.0
+		if trades > 0 {
+			wr = float64(wins) / float64(trades)
+		}
+		result.ByRegime[regime] = RegimeStats{Trades: trades, Wins: wins, WinRate: wr}
+	}
+
+	// ── Per-hour stats
+	for hour, trades := range hourTrades {
+		wins := hourWins[hour]
+		wr := 0.0
+		if trades > 0 {
+			wr = float64(wins) / float64(trades)
+		}
+		result.ByHour[hour] = HourStats{Trades: trades, Wins: wins, WinRate: wr}
+	}
 
 	return result
+}
+
+// sharpeRatio computes annualised Sharpe ratio from a slice of per-trade P&L values.
+// Assumes each trade corresponds to roughly one 1-minute bar.
+func sharpeRatio(pl []float64) float64 {
+	n := len(pl)
+	if n < 2 {
+		return 0
+	}
+
+	mean := 0.0
+	for _, v := range pl {
+		mean += v
+	}
+	mean /= float64(n)
+
+	variance := 0.0
+	for _, v := range pl {
+		diff := v - mean
+		variance += diff * diff
+	}
+	variance /= float64(n - 1)
+	sd := math.Sqrt(variance)
+
+	if sd == 0 {
+		return 0
+	}
+
+	// Annualise: ~525,600 1-minute bars per year
+	annualFactor := math.Sqrt(525_600)
+	return (mean / sd) * annualFactor
 }
 
 // CalibrateFromBacktest runs a detailed backtest and returns ScoreTierStats per score tier.
@@ -181,7 +350,12 @@ func CalibrateFromBacktest(
 			Candles15m: candles15m,
 		}
 
-		out := ComputeWeightedScore(input, cfg)
+		fv := ExtractFeatures(input, cfg)
+		if !fv.Regime.IsTradeable() {
+			continue
+		}
+
+		out := ComputeWeightedScore(input, cfg, &fv)
 		absScore := out.Score
 		if absScore < 0 {
 			absScore = -absScore

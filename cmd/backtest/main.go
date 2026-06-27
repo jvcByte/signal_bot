@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/rs/zerolog"
@@ -42,8 +43,7 @@ func main() {
 	fmt.Println("║                  BACKTEST RESULTS                         ║")
 	fmt.Println("╚════════════════════════════════════════════════════════════╝")
 	fmt.Printf("  Period: last %d 1-minute candles per asset\n", *candles)
-	fmt.Printf("  Strategy: RSI + EMA + Bollinger + MACD + Volume + Patterns + MTF\n")
-	fmt.Printf("  Min score threshold: 5 factors agreeing + MTF conflict filter\n\n")
+	fmt.Printf("  Strategy: RSI + EMA + Bollinger + MACD + Volume + Patterns + MTF + Regime\n\n")
 
 	totalTrades := 0
 	totalWins   := 0
@@ -65,7 +65,7 @@ func main() {
 		result := analyzer.BacktestAsset(asset, c1m, c5m, c15m, analyzerCfg, 2, logger)
 
 		if result.TotalTrades == 0 {
-			fmt.Printf("  %-12s  No signals generated\n", asset)
+			fmt.Printf("  %-12s  No signals generated\n\n", asset)
 			continue
 		}
 
@@ -76,19 +76,77 @@ func main() {
 			winEmoji = "⚠️ "
 		}
 
-		fmt.Printf("  %s %-12s  Trades: %3d  Wins: %3d  Losses: %3d  WinRate: %5.1f%%  P&L: $%+.2f  MaxDD: $%.2f\n",
+		// ── Main line
+		fmt.Printf("  %s %-12s  Trades: %3d  WinRate: %5.1f%%  P&L: $%+.2f  MaxDD: $%.2f\n",
 			winEmoji, asset,
-			result.TotalTrades, result.Wins, result.Losses,
+			result.TotalTrades,
 			result.WinRate*100,
 			result.TotalProfit,
 			result.MaxDrawdown,
 		)
 
+		// ── Extended metrics line
+		fmt.Printf("             ProfitFactor: %.2f  Expectancy: $%+.3f  Sharpe: %.2f  AvgW: $%.3f  AvgL: $%.3f  MaxCW: %d  MaxCL: %d\n",
+			result.ProfitFactor,
+			result.Expectancy,
+			result.SharpeRatio,
+			result.AvgWin,
+			result.AvgLoss,
+			result.MaxConsecWins,
+			result.MaxConsecLosses,
+		)
+
+		// ── Regime breakdown
+		if len(result.ByRegime) > 0 {
+			regimeParts := make([]string, 0, len(result.ByRegime))
+			// Sort by regime value for stable output
+			regimes := make([]int, 0, len(result.ByRegime))
+			for r := range result.ByRegime {
+				regimes = append(regimes, int(r))
+			}
+			sort.Ints(regimes)
+			for _, ri := range regimes {
+				r := analyzer.Regime(ri)
+				rs := result.ByRegime[r]
+				if rs.Trades > 0 {
+					regimeParts = append(regimeParts, fmt.Sprintf("%s:%.0f%%(%d)", r.String(), rs.WinRate*100, rs.Trades))
+				}
+			}
+			fmt.Printf("             By Regime: %s\n", strings.Join(regimeParts, "  "))
+		}
+
+		// ── Best hours (top 3 by win rate, min 3 trades)
+		type hourEntry struct {
+			hour int
+			hs   analyzer.HourStats
+		}
+		var hourList []hourEntry
+		for h, hs := range result.ByHour {
+			if hs.Trades >= 3 {
+				hourList = append(hourList, hourEntry{h, hs})
+			}
+		}
+		sort.Slice(hourList, func(i, j int) bool {
+			return hourList[i].hs.WinRate > hourList[j].hs.WinRate
+		})
+		if len(hourList) > 0 {
+			top := hourList
+			if len(top) > 3 {
+				top = top[:3]
+			}
+			hourParts := make([]string, 0, len(top))
+			for _, he := range top {
+				hourParts = append(hourParts, fmt.Sprintf("%02d:00(%.0f%%)", he.hour, he.hs.WinRate*100))
+			}
+			fmt.Printf("             Best Hours: %s\n", strings.Join(hourParts, "  "))
+		}
+
+		fmt.Println()
+
 		totalTrades += result.TotalTrades
 		totalWins   += result.Wins
 	}
 
-	fmt.Println()
 	fmt.Println("──────────────────────────────────────────────────────────────")
 	if totalTrades > 0 {
 		overallWR := float64(totalWins) / float64(totalTrades) * 100
