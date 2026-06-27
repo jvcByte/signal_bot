@@ -42,7 +42,7 @@ func main() {
 
 	assets := cfg.Analyzer.Assets
 	if len(assets) == 0 {
-		assets = []string{"EURUSD", "GBPUSD", "AUDUSD", "USDJPY"}
+		assets = []string{"OPENAI", "ANTHROPIC", "TESLA", "APPLE", "AMAZON","GOOGLE", "MSFT", "NVDA", "FB", "SNAP", "SPACEX", "PLTR"}
 	}
 
 	model := analyzer.NewConfidenceModel()
