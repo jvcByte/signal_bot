@@ -42,6 +42,8 @@ type AnalyzerConfig struct {
 	EnableMTF bool
 	// Score calibration from backtest (optional)
 	ScoreTierMap map[int]ScoreTierStats
+	// Position sizing
+	Sizing SizingConfig
 }
 
 // ScoreTierStats holds historical performance for a given score tier
@@ -69,6 +71,7 @@ func DefaultConfig() AnalyzerConfig {
 		VolumeMultiplier: 1.2,
 		EnableMTF:        true,
 		ScoreTierMap:     make(map[int]ScoreTierStats),
+		Sizing:           DefaultSizingConfig(),
 	}
 }
 
@@ -119,15 +122,18 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 	// ── Step 1: Extract feature vector (includes regime detection)
 	fv := ExtractFeatures(input, a.config)
 
-	// ── Step 2: Skip if regime is not tradeable
-	if !fv.Regime.IsTradeable() {
+	// ── Step 2: Run filter chain (replaces manual regime check)
+	chain := NewFilterChain(
+		&RegimeFilter{},
+		&LowVolatilityFilter{MinATRPct: 0.03},
+		&HighVolatilityFilter{MaxATRPct: 0.8},
+		&ADXFilter{MinADX: 15},
+	)
+	if pass, reason := chain.Apply(fv, a.config); !pass {
 		a.logger.Debug().
 			Str("asset", asset).
-			Str("regime", fv.Regime.String()).
-			Float64("adx", fv.ADX).
-			Float64("atr_pct", fv.ATRPct).
-			Float64("bb_width", fv.BBWidth).
-			Msg("⏭  Skipping — regime not tradeable")
+			Str("reason", reason).
+			Msg("⏭  Signal filtered")
 		return nil, nil
 	}
 
@@ -139,12 +145,15 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		absScore = -absScore
 	}
 
+	// ── Step 4: Dynamic threshold based on volatility
+	threshold := DynamicThreshold(a.config.SignalThreshold, fv.ATRPct)
+
 	a.logger.Info().
 		Str("asset", asset).
 		Str("regime", fv.Regime.String()).
 		Float64("score", result.Score).
 		Float64("abs_score", absScore).
-		Float64("threshold", a.config.SignalThreshold).
+		Float64("threshold", threshold).
 		Float64("rsi", result.Meta.RSI).
 		Float64("adx", result.Meta.ADX).
 		Float64("stoch_k", result.Meta.StochK).
@@ -154,7 +163,7 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		Strs("factors", result.Reasons).
 		Msg("  ↳ Analysis")
 
-	if absScore < a.config.SignalThreshold {
+	if absScore < threshold {
 		return nil, nil
 	}
 
@@ -166,7 +175,7 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		direction = models.DirectionPut
 	}
 
-	// ── Step 4: Estimate confidence via ConfidenceModel
+	// ── Step 5: Estimate confidence via ConfidenceModel
 	confidence := a.confidence.Estimate(result.Score, fv.Regime, fv)
 
 	// Fallback: use calibrated tier stats if the model has no regime history yet
@@ -188,11 +197,15 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 
 	entryWindow := time.Now().Add(2 * time.Minute).Truncate(time.Minute)
 
+	// ── Step 6: Volatility-adjusted position sizing
+	tradeAmount := CalculateSize(a.config.Sizing, confidence, 0.87, 100.0, fv.ATRPct)
+
 	signal := &models.Signal{
 		Asset:       asset,
 		Direction:   direction,
 		Expiry:      a.config.ExpiryMinutes,
 		Confidence:  confidence,
+		Amount:      tradeAmount,
 		EntryWindow: entryWindow,
 		Source:      "jvcbyte-analyzer",
 		ReceivedAt:  time.Now(),
@@ -214,6 +227,7 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 		Float64("score", result.Score).
 		Float64("adx", result.Meta.ADX).
 		Float64("ema_dist", fv.EMADist).
+		Float64("amount", tradeAmount).
 		Strs("reasons", result.Reasons).
 		Msg("🎯 SIGNAL GENERATED")
 

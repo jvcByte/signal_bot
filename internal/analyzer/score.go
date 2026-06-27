@@ -24,6 +24,26 @@ const (
 	weightADX        = 1.5
 )
 
+// DynamicThreshold returns a score threshold adjusted for asset volatility.
+// Higher volatility (larger ATR%) → require higher score conviction.
+// Lower volatility → use default threshold.
+func DynamicThreshold(baseThreshold, atrPct float64) float64 {
+	// ATR% < 0.05% (dead flat) → 1.5x threshold
+	// ATR% 0.05-0.15% (normal) → base threshold
+	// ATR% 0.15-0.3% (trending) → 0.8x threshold (easier to get conviction)
+	// ATR% > 0.3% (volatile/news) → 1.3x threshold (need more confirmation)
+	switch {
+	case atrPct < 0.05:
+		return baseThreshold * 1.5
+	case atrPct < 0.15:
+		return baseThreshold
+	case atrPct < 0.3:
+		return baseThreshold * 0.8
+	default:
+		return baseThreshold * 1.3
+	}
+}
+
 // regimeWeights multiplies per-indicator base weights depending on the
 // detected market regime.  Keys match the indicator group names used in
 // applyRegimeWeight below.
@@ -203,6 +223,26 @@ func ComputeWeightedScore(in ScoreInput, cfg AnalyzerConfig, fv *FeatureVector) 
 	} else if macdHist < 0 && macdLine < macdSignal {
 		out.Score -= wMACD
 		out.Reasons = append(out.Reasons, fmt.Sprintf("MACD bearish (h=%.5f)", macdHist))
+	}
+
+	// ── RSI Divergence (+2.0 weight - strong reversal signal)
+	rsiDiv := indicators.RSIDivergence(closes, cfg.RSIPeriod, 5)
+	if rsiDiv == 1 {
+		out.Score += 2.0
+		out.Reasons = append(out.Reasons, "RSI bullish divergence")
+	} else if rsiDiv == -1 {
+		out.Score -= 2.0
+		out.Reasons = append(out.Reasons, "RSI bearish divergence")
+	}
+
+	// ── MACD Divergence (+1.5 weight)
+	macdDiv := indicators.MACDDivergence(closes, 12, 26, 9, 5)
+	if macdDiv == 1 {
+		out.Score += 1.5
+		out.Reasons = append(out.Reasons, "MACD bullish divergence")
+	} else if macdDiv == -1 {
+		out.Score -= 1.5
+		out.Reasons = append(out.Reasons, "MACD bearish divergence")
 	}
 
 	// ── Volume

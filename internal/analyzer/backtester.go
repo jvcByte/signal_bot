@@ -403,3 +403,88 @@ func CalibrateFromBacktest(
 	}
 	return result
 }
+
+// WalkForwardConfig controls the rolling window parameters
+type WalkForwardConfig struct {
+	TrainSize int // number of 1m candles for training window
+	TestSize  int // number of 1m candles for test (out-of-sample) window
+	StepSize  int // how many candles to advance per fold
+}
+
+// WalkForwardResult holds results across all folds
+type WalkForwardResult struct {
+	Folds       []BacktestResult
+	Overall     BacktestResult
+	Consistency float64 // % of folds that are profitable
+}
+
+// WalkForwardBacktest performs rolling-window out-of-sample backtesting.
+// Training window: not used for parameter optimization yet (future: auto-tune)
+// Test window: evaluated out-of-sample, results aggregated.
+func WalkForwardBacktest(
+	asset string,
+	candles []wstrader.Candle,
+	candles5m []wstrader.Candle,
+	candles15m []wstrader.Candle,
+	cfg AnalyzerConfig,
+	wfCfg WalkForwardConfig,
+	expiryMinutes int,
+	logger zerolog.Logger,
+) WalkForwardResult {
+	var result WalkForwardResult
+
+	totalNeeded := wfCfg.TrainSize + wfCfg.TestSize
+	if len(candles) < totalNeeded {
+		logger.Warn().Str("asset", asset).Int("need", totalNeeded).Int("have", len(candles)).Msg("Not enough candles for walk-forward")
+		return result
+	}
+
+	pos := 0
+	foldNum := 0
+	for pos+totalNeeded <= len(candles) {
+		// Test window only (train window reserved for future param optimization)
+		testStart := pos + wfCfg.TrainSize
+		testEnd := testStart + wfCfg.TestSize
+		if testEnd > len(candles) {
+			break
+		}
+
+		testCandles := candles[testStart:testEnd]
+		// Use all data up to test window for indicator warmup
+		warmupCandles := candles[:testEnd]
+
+		foldResult := BacktestAsset(asset, warmupCandles, candles5m, candles15m, cfg, expiryMinutes, logger)
+		// Only count trades in the test window
+		foldResult.Asset = fmt.Sprintf("%s fold%d", asset, foldNum+1)
+		foldResult.StartTime = testCandles[0].Time
+		if len(testCandles) > 0 {
+			foldResult.EndTime = testCandles[len(testCandles)-1].Time
+		}
+
+		result.Folds = append(result.Folds, foldResult)
+		foldNum++
+		pos += wfCfg.StepSize
+	}
+
+	// Aggregate overall stats
+	profitableFolds := 0
+	totalTrades := 0
+	totalWins := 0
+	for _, fold := range result.Folds {
+		totalTrades += fold.TotalTrades
+		totalWins += fold.Wins
+		if fold.TotalProfit > 0 {
+			profitableFolds++
+		}
+	}
+	result.Overall.TotalTrades = totalTrades
+	result.Overall.Wins = totalWins
+	if totalTrades > 0 {
+		result.Overall.WinRate = float64(totalWins) / float64(totalTrades)
+	}
+	if len(result.Folds) > 0 {
+		result.Consistency = float64(profitableFolds) / float64(len(result.Folds))
+	}
+
+	return result
+}

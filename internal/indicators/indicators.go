@@ -337,3 +337,50 @@ func Trend(closes []float64, fastPeriod, slowPeriod int) int {
 	}
 	return 0
 }
+
+// RSIDivergence detects RSI divergence over a lookback window.
+// Bullish divergence: price makes lower low, RSI makes higher low.
+// Bearish divergence: price makes higher high, RSI makes lower high.
+// Returns: 1=bullish, -1=bearish, 0=none
+func RSIDivergence(closes []float64, rsiPeriod, lookback int) int {
+	if len(closes) < rsiPeriod+lookback+1 {
+		return 0
+	}
+	// Compute RSI at current and lookback bars ago
+	rsiNow := RSI(closes, rsiPeriod)
+	rsiPrev := RSI(closes[:len(closes)-lookback], rsiPeriod)
+	priceNow := closes[len(closes)-1]
+	pricePrev := closes[len(closes)-1-lookback]
+
+	// Bullish: price lower low, RSI higher low
+	if priceNow < pricePrev && rsiNow > rsiPrev && rsiNow < 50 {
+		return 1
+	}
+	// Bearish: price higher high, RSI lower high
+	if priceNow > pricePrev && rsiNow < rsiPrev && rsiNow > 50 {
+		return -1
+	}
+	return 0
+}
+
+// MACDDivergence detects MACD histogram divergence.
+// Returns: 1=bullish, -1=bearish, 0=none
+func MACDDivergence(closes []float64, fast, slow, signal, lookback int) int {
+	if len(closes) < slow+signal+lookback+1 {
+		return 0
+	}
+	_, _, histNow := MACDSeries(closes, fast, slow, signal)
+	_, _, histPrev := MACDSeries(closes[:len(closes)-lookback], fast, slow, signal)
+	priceNow := closes[len(closes)-1]
+	pricePrev := closes[len(closes)-1-lookback]
+
+	// Bullish: price lower, histogram higher (momentum recovering)
+	if priceNow < pricePrev && histNow > histPrev && histNow < 0 {
+		return 1
+	}
+	// Bearish: price higher, histogram lower (momentum fading)
+	if priceNow > pricePrev && histNow < histPrev && histNow > 0 {
+		return -1
+	}
+	return 0
+}
