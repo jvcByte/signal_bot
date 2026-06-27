@@ -51,14 +51,20 @@ func ParseMexyDetailed(text string) (*MexySignal, error) {
 		}
 	}
 
-	// Extract timeframe
-	timeframeRegex := regexp.MustCompile(`(?i)🕒\s+timeframe:\s*(\d+)-min|timeframe:\s*(\d+)-min`)
+	// Extract timeframe - supports both minutes and seconds
+	// "30-sec expiry", "2-min expiry", "1-minute expiry"
+	timeframeRegex := regexp.MustCompile(`(?i)🕒\s+timeframe:\s*(\d+)-(sec|min)|timeframe:\s*(\d+)-(sec|min)`)
 	if matches := timeframeRegex.FindStringSubmatch(text); matches != nil {
 		val := matches[1]
+		unit := matches[2]
 		if val == "" {
-			val = matches[2]
+			val = matches[3]
+			unit = matches[4]
 		}
 		expiry, _ := strconv.Atoi(val)
+		if strings.HasPrefix(strings.ToLower(unit), "min") {
+			expiry *= 60 // convert to seconds
+		}
 		signal.Expiry = expiry
 	} else {
 		return nil, fmt.Errorf("timeframe not found")

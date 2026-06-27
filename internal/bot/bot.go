@@ -131,7 +131,7 @@ func (b *Bot) handleMessage(ctx context.Context, message string) error {
 		Str("signal_id", signal.ID[:8]).
 		Str("asset", signal.Asset).
 		Str("direction", signal.Direction.String()).
-		Int("expiry_minutes", signal.Expiry).
+		Int("expiry_sec", signal.Expiry).
 		Float64("confidence_pct", signal.Confidence*100).
 		Msg("📊 SIGNAL DETAILS")
 	if !signal.EntryWindow.IsZero() {

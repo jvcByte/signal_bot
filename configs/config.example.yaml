@@ -28,6 +28,7 @@ analyzer:
   signal_threshold: 4       # Min factors agreeing (3-9, lower = more signals, higher = better quality)
   interval_seconds: 60      # Analysis interval in seconds
   signal_cooldown: 7        # Minutes between signals for same asset
+  expiry_seconds: 30        # Trade expiry: 30=30s, 60=1min, 120=2min, 300=5min
   assets:
     # Forex OTC (24/7)
     - EURUSD

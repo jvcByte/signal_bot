@@ -48,9 +48,10 @@ type RiskConfig struct {
 }
 
 type AnalyzerConfig struct {
-	SignalThreshold int      `yaml:"signal_threshold"` // min factors agreeing (default: 4)
-	IntervalSeconds int      `yaml:"interval_seconds"` // analysis interval (default: 60)
-	SignalCooldown  int      `yaml:"signal_cooldown"`  // minutes between signals per asset
+	SignalThreshold int      `yaml:"signal_threshold"`
+	IntervalSeconds int      `yaml:"interval_seconds"`
+	SignalCooldown  int      `yaml:"signal_cooldown"`
+	ExpirySeconds   int      `yaml:"expiry_seconds"`   // trade expiry in seconds
 	Assets          []string `yaml:"assets"`
 }
 

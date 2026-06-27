@@ -28,7 +28,7 @@ type AnalyzerConfig struct {
 	FastMAPeriod     int
 	SlowMAPeriod     int
 	MinConfidence    float64
-	ExpiryMinutes    int
+	ExpiryMinutes    int  // expiry in seconds (renamed but keeping field name for compat)
 	EnableMartingale bool
 	SignalCooldown   int     // minutes
 	SignalThreshold  float64 // min weighted score to generate signal
@@ -61,7 +61,7 @@ func DefaultConfig() AnalyzerConfig {
 		FastMAPeriod:     10,
 		SlowMAPeriod:     20,
 		MinConfidence:    0.60,
-		ExpiryMinutes:    2,
+		ExpiryMinutes:    30,  // 30 seconds default
 		EnableMartingale: true,
 		SignalCooldown:   7,
 		SignalThreshold:  3.5,
@@ -225,10 +225,12 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 	}
 
 	if a.config.EnableMartingale {
+		// Martingale levels spaced by expiry duration
+		expDur := time.Duration(a.config.ExpiryMinutes) * time.Second
 		signal.MartingaleLevels = []models.MartingaleTime{
-			{Level: 1, Time: entryWindow.Add(2 * time.Minute)},
-			{Level: 2, Time: entryWindow.Add(4 * time.Minute)},
-			{Level: 3, Time: entryWindow.Add(6 * time.Minute)},
+			{Level: 1, Time: entryWindow.Add(expDur * 2)},
+			{Level: 2, Time: entryWindow.Add(expDur * 4)},
+			{Level: 3, Time: entryWindow.Add(expDur * 6)},
 		}
 	}
 

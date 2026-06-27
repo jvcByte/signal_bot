@@ -94,7 +94,7 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 		Bool("is_otc", isOTC).
 		Int("active_id", activeID).
 		Str("direction", string(signal.Direction)).
-		Int("expiry_min", signal.Expiry).
+		Int("expiry_sec", signal.Expiry).
 		Float64("amount", amount).
 		Msg("📡 Placing trade via WebSocket API...")
 
@@ -150,10 +150,10 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 			OptionTypeID:   12, // 12 = Blitz option
 			Direction:      direction,
 			Expired:        expiryTimestamp,
-			ExpirationSize: signal.Expiry * 60, // convert minutes to seconds
+			ExpirationSize: signal.Expiry, // already in seconds
 			Price:          amount,
 			RefundValue:    0,
-			ProfitPercent:  87, // default payout %, IQ Option adjusts this dynamically
+			ProfitPercent:  87,
 		},
 	}
 
@@ -233,9 +233,7 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 }
 
 // calcExpiryTimestamp returns the Unix timestamp when the blitz option expires.
-// For blitz options, expired = now + expiration_size_in_seconds.
-// We add a small buffer so the trade lands within the purchase window.
-func calcExpiryTimestamp(expiryMinutes int) int64 {
-	expirySeconds := int64(expiryMinutes * 60)
-	return time.Now().Unix() + expirySeconds
+// expirySeconds is already in seconds.
+func calcExpiryTimestamp(expirySeconds int) int64 {
+	return time.Now().Unix() + int64(expirySeconds)
 }

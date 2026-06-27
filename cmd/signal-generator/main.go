@@ -73,6 +73,9 @@ func main() {
 	if cfg.Analyzer.SignalCooldown > 0 {
 		analyzerCfg.SignalCooldown = cfg.Analyzer.SignalCooldown
 	}
+	if cfg.Analyzer.ExpirySeconds > 0 {
+		analyzerCfg.ExpiryMinutes = cfg.Analyzer.ExpirySeconds
+	}
 	an := analyzer.New(trader, logger, analyzerCfg)
 
 	// Load calibrated confidence model if it exists
@@ -198,12 +201,20 @@ func formatSignalMessage(signal *models.Signal) string {
 		asset = asset[:3] + "/" + asset[3:]
 	}
 
+	// Format expiry - show seconds if < 60, else show minutes
+	var expiryStr string
+	if signal.Expiry < 60 {
+		expiryStr = fmt.Sprintf("%d-sec", signal.Expiry)
+	} else {
+		expiryStr = fmt.Sprintf("%d-min", signal.Expiry/60)
+	}
+
 	msg := fmt.Sprintf(`JVCBYTE BLITZ
 
 🚨 TRADE NOW!!
 
 %s  %s (OTC)
-🕒  Timeframe: %d-min expiry
+🕒  Timeframe: %s expiry
 🤖  AI Confidence: %.0f%%
 🕰️  Entry Window: %s
 Direction: %s %s
@@ -211,7 +222,7 @@ Direction: %s %s
 📊  Martingale Levels:`,
 		assetArrow,
 		asset,
-		signal.Expiry,
+		expiryStr,
 		signal.Confidence*100,
 		signal.EntryWindow.Format("3:04 PM"),
 		directionEmoji,
