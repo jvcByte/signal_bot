@@ -51,8 +51,12 @@ type AnalyzerConfig struct {
 	SignalThreshold int      `yaml:"signal_threshold"`
 	IntervalSeconds int      `yaml:"interval_seconds"`
 	SignalCooldown  int      `yaml:"signal_cooldown"`
-	ExpirySeconds   int      `yaml:"expiry_seconds"`   // trade expiry in seconds
+	ExpirySeconds   int      `yaml:"expiry_seconds"`
 	Assets          []string `yaml:"assets"`
+	// AssetTypes filters which categories to analyze.
+	// Valid values: forex, crypto, stocks, indices, commodities
+	// Empty = use Assets list directly (no filtering)
+	AssetTypes      []string `yaml:"asset_types"`
 }
 
 type LoggingConfig struct {

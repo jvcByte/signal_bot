@@ -87,11 +87,18 @@ func main() {
 		logger.Info().Str("path", confidencePath).Msg("✓ Calibrated confidence model loaded")
 	}
 
-	// Asset list from config (fallback to defaults)
+	// Asset list from config, filtered by asset_types if set
 	assetList := cfg.Analyzer.Assets
 	if len(assetList) == 0 {
 		assetList = []string{"EURUSD", "GBPUSD", "AUDUSD", "USDJPY"}
 		logger.Warn().Msg("No assets in config, using defaults")
+	}
+	if len(cfg.Analyzer.AssetTypes) > 0 {
+		assetList = analyzer.FilterByTypes(assetList, cfg.Analyzer.AssetTypes)
+		logger.Info().
+			Strs("types", cfg.Analyzer.AssetTypes).
+			Int("count", len(assetList)).
+			Msg("✓ Filtered assets by type")
 	}
 
 	intervalSec := cfg.Analyzer.IntervalSeconds
