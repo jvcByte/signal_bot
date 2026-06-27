@@ -1,36 +1,75 @@
+# ─────────────────────────────────────────────────────────────────
+# JVCBYTE BLITZ — Signal Bot Configuration
+# Copy this file to config.yaml and fill in your credentials.
+# ─────────────────────────────────────────────────────────────────
+
+# ── Telegram ────────────────────────────────────────────────────
 telegram:
   api_id: 12345678                    # Get from https://my.telegram.org
   api_hash: "your_api_hash_here"
   phone: "+1234567890"
-  channel_id: -1003488226342          # Signal channel ID
+  channel_id: -1001234567890          # Channel ID where signals are posted/read
   session_file: "session/telegram.session"
 
+# ── IQ Option ───────────────────────────────────────────────────
 iqoption:
   email: "your_email@example.com"
   password: "your_password"
-  demo_mode: true                     # Always start with demo!
+  demo_mode: true                     # ⚠️  Always start on demo! Set false for real money.
 
+# ── Trading execution ────────────────────────────────────────────
 trading:
-  default_amount: 2.0                 # Trade amount per signal
-  max_concurrent_trades: 3
-  min_balance: 100.0
-  trade_delay_ms: 2000
-  max_daily_loss: 50.0
+  default_amount: 1.0                 # Default trade size ($)
+  max_concurrent_trades: 3            # Max open trades at once
+  min_balance: 30.0                   # Pause trading if balance drops below this
+  trade_delay_ms: 2000                # Delay between placing trades (ms)
+  max_daily_loss: 50.0                # Auto-pause if daily loss exceeds this ($)
 
+# ── Risk management ──────────────────────────────────────────────
 risk:
   enabled: true
-  max_trades_per_day: 0                # 0 = unlimited, set to e.g. 50 to cap daily trades
-  min_signal_confidence: 0.7
-  martingale: true                     # re-enter on loss at next martingale level
-  martingale_max: 3                    # max levels to follow (1-3)
+  max_trades_per_day: 0               # 0 = unlimited
+  min_signal_confidence: 0.60        # Minimum confidence to execute (0.0–1.0)
+  martingale: true                    # Double stake after a loss
+  martingale_max: 3                   # Max martingale levels (0 = no cap)
 
+# ── Signal Analyzer (JVCBYTE BLITZ signal generator) ─────────────
 analyzer:
-  signal_threshold: 4       # Min factors agreeing (3-9, lower = more signals, higher = better quality)
-  interval_seconds: 60      # Analysis interval in seconds
-  signal_cooldown: 7        # Minutes between signals for same asset
-  expiry_seconds: 30        # Trade expiry: 30=30s, 60=1min, 120=2min, 300=5min
+  # How strict the signal must be.
+  # 3 = more signals, lower quality
+  # 5 = fewer signals, higher quality
+  # Recommended: 4
+  signal_threshold: 4
+
+  # How often to scan the market (seconds)
+  interval_seconds: 60
+
+  # Minimum gap between signals for the same asset (minutes)
+  signal_cooldown: 7
+
+  # Trade expiry duration in seconds
+  # 30  = 30-second trades (high frequency, needs fast market)
+  # 60  = 1-minute trades
+  # 120 = 2-minute trades (classic binary options)
+  # 300 = 5-minute trades
+  expiry_seconds: 30
+
+  # ── Asset type filter ──────────────────────────────────────────
+  # Choose which categories to analyze.
+  # Options: forex, crypto, stocks, indices, commodities
+  # Remove this section entirely to analyze everything in the assets list.
+  asset_types:
+    - forex
+    - crypto
+  # - stocks
+  # - indices
+  # - commodities
+
+  # ── Full asset list ───────────────────────────────────────────
+  # These are filtered by asset_types above.
+  # All names are IQ Option OTC asset names (verified).
   assets:
-    # Forex OTC (24/7)
+    # ── Forex OTC (24/7 availability)
     - EURUSD
     - GBPUSD
     - AUDUSD
@@ -39,25 +78,69 @@ analyzer:
     - USDCHF
     - EURJPY
     - GBPJPY
-    # Crypto OTC
-    - BTCUSD
+    - AUDJPY
+    - AUDCAD
+    - EURGBP
+    - EURAUD
+    - EURCAD
+    - GBPAUD
+    - GBPCAD
+    - CHFJPY
+    - CADCHF
+    - AUDCHF
+    - AUDNZD
+    - NZDCAD
+    - NZDJPY
+    - GBPCHF
+    - GBPNZD
+
+    # ── Crypto OTC
     - ETHUSD
     - XRPUSD
-    # Stocks OTC
+    - SOLUSD
+    - DOGECOIN
+    - CARDANO
+    - LTCUSD
+    - TONUSD
+    - BCHUSD
+
+    # ── Stocks OTC
     - OPENAI
+    - ANTHROPIC
     - TESLA
     - APPLE
     - AMAZON
-    # Indices OTC
+    - GOOGLE
+    - MSFT
+    - NVDA
+    - FB
+    - SNAP
+    - SPACEX
+    - PLTR
+
+    # ── Indices OTC
     - SP500
     - US30
-    # Commodities OTC
-    - XAUUSD
+    - USNDAQ100
+    - GER30
+    - UK100
+    - EU50
+    - JP225
+    - AUS200
+    - HK33
 
+    # ── Commodities OTC
+    - XAUUSD
+    - XAGUSD
+    - USOUSD
+    - UKOUSD
+
+# ── Logging ──────────────────────────────────────────────────────
 logging:
   level: "info"                       # debug / info / warn / error
   file: "logs/bot.log"
   console: true
 
+# ── Database ─────────────────────────────────────────────────────
 database:
   path: "data/trades.db"
