@@ -158,11 +158,10 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 	}
 
 	// IQ Option wraps commands in "sendMessage"
-	// Retry once on profit rate change rejection (payout shifts dynamically)
+	// Retry up to 3 times on profit rate change - payout shifts dynamically
 	var resp json.RawMessage
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
-			// Recalculate expiry timestamp on retry
 			expiryTimestamp = calcExpiryTimestamp(signal.Expiry)
 			body.Body = optionBody{
 				UserBalanceID:  balanceID,
@@ -173,10 +172,11 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 				ExpirationSize: signal.Expiry,
 				Price:          amount,
 				RefundValue:    0,
-				ProfitPercent:  87,
+				ProfitPercent:  0, // 0 = accept whatever rate IQ Option offers
 			}
-			t.logger.Debug().Int("attempt", attempt+1).Msg("Retrying with fresh expiry timestamp...")
-			time.Sleep(500 * time.Millisecond)
+			wait := time.Duration(attempt) * time.Second
+			t.logger.Debug().Int("attempt", attempt+1).Dur("wait", wait).Msg("Retrying trade...")
+			time.Sleep(wait)
 		}
 
 		resp, err = t.sendAndWait("sendMessage", body, "option")
@@ -184,24 +184,22 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 			continue
 		}
 
-		// Check if rejection is due to profit rate change - retry if so
 		var quickCheck struct {
 			Message string `json:"message"`
-			Result  struct {
-				Message string `json:"message"`
-			} `json:"result"`
+			Result  struct{ Message string `json:"message"` } `json:"result"`
 		}
 		if json.Unmarshal(resp, &quickCheck) == nil {
 			msg := quickCheck.Message
 			if msg == "" {
 				msg = quickCheck.Result.Message
 			}
-			if strings.Contains(msg, "profit rate") {
+			if strings.Contains(strings.ToLower(msg), "profit rate") ||
+				strings.Contains(strings.ToLower(msg), "profit_rate") {
 				err = fmt.Errorf("profit_rate_change")
 				continue
 			}
 		}
-		break // success or non-retryable error
+		break
 	}
 
 	if err != nil {
