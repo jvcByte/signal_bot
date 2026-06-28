@@ -231,6 +231,13 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 			{Level: 1, Time: entryWindow.Add(expDur)},
 			{Level: 2, Time: entryWindow.Add(expDur * 2)},
 			{Level: 3, Time: entryWindow.Add(expDur * 3)},
+			{Level: 4, Time: entryWindow.Add(expDur * 4)},
+			{Level: 5, Time: entryWindow.Add(expDur * 5)},
+			{Level: 6, Time: entryWindow.Add(expDur * 6)},
+			{Level: 7, Time: entryWindow.Add(expDur * 7)},
+			{Level: 8, Time: entryWindow.Add(expDur * 8)},
+			{Level: 9, Time: entryWindow.Add(expDur * 9)},
+			{Level: 10, Time: entryWindow.Add(expDur * 10)},
 		}
 	}
 
