@@ -225,12 +225,12 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 	}
 
 	if a.config.EnableMartingale {
-		// Martingale levels spaced by expiry duration
+		// Space martingale levels by one expiry duration each
 		expDur := time.Duration(a.config.ExpiryMinutes) * time.Second
 		signal.MartingaleLevels = []models.MartingaleTime{
-			{Level: 1, Time: entryWindow.Add(expDur * 2)},
-			{Level: 2, Time: entryWindow.Add(expDur * 4)},
-			{Level: 3, Time: entryWindow.Add(expDur * 6)},
+			{Level: 1, Time: entryWindow.Add(expDur)},
+			{Level: 2, Time: entryWindow.Add(expDur * 2)},
+			{Level: 3, Time: entryWindow.Add(expDur * 3)},
 		}
 	}
 
