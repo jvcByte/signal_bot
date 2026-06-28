@@ -158,7 +158,52 @@ func (t *Trader) PlaceTrade(signal *models.Signal, amount float64) (*models.Trad
 	}
 
 	// IQ Option wraps commands in "sendMessage"
-	resp, err := t.sendAndWait("sendMessage", body, "option")
+	// Retry once on profit rate change rejection (payout shifts dynamically)
+	var resp json.RawMessage
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			// Recalculate expiry timestamp on retry
+			expiryTimestamp = calcExpiryTimestamp(signal.Expiry)
+			body.Body = optionBody{
+				UserBalanceID:  balanceID,
+				ActiveID:       activeID,
+				OptionTypeID:   12,
+				Direction:      direction,
+				Expired:        expiryTimestamp,
+				ExpirationSize: signal.Expiry,
+				Price:          amount,
+				RefundValue:    0,
+				ProfitPercent:  87,
+			}
+			t.logger.Debug().Int("attempt", attempt+1).Msg("Retrying with fresh expiry timestamp...")
+			time.Sleep(500 * time.Millisecond)
+		}
+
+		resp, err = t.sendAndWait("sendMessage", body, "option")
+		if err != nil {
+			continue
+		}
+
+		// Check if rejection is due to profit rate change - retry if so
+		var quickCheck struct {
+			Message string `json:"message"`
+			Result  struct {
+				Message string `json:"message"`
+			} `json:"result"`
+		}
+		if json.Unmarshal(resp, &quickCheck) == nil {
+			msg := quickCheck.Message
+			if msg == "" {
+				msg = quickCheck.Result.Message
+			}
+			if strings.Contains(msg, "profit rate") {
+				err = fmt.Errorf("profit_rate_change")
+				continue
+			}
+		}
+		break // success or non-retryable error
+	}
+
 	if err != nil {
 		trade.Status = models.StatusFailed
 		trade.ErrorMsg = err.Error()
