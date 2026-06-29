@@ -1,6 +1,10 @@
 package analyzer
 
-import "signal-bot/internal/indicators"
+import (
+	"strings"
+
+	"signal-bot/internal/indicators"
+)
 
 // Regime represents the detected market regime
 type Regime int
@@ -77,4 +81,33 @@ func (r Regime) String() string {
 // IsTradeable returns true when the regime has enough structure to trade
 func (r Regime) IsTradeable() bool {
 	return r != RegimeUnknown
+}
+
+// ParseRegimeNames converts config strings to Regime values.
+func ParseRegimeNames(names []string) []Regime {
+	out := make([]Regime, 0, len(names))
+	for _, name := range names {
+		if r, ok := ParseRegime(name); ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// ParseRegime maps a human-readable regime name to its enum value.
+func ParseRegime(name string) (Regime, bool) {
+	switch strings.TrimSpace(name) {
+	case RegimeTrending.String():
+		return RegimeTrending, true
+	case RegimeRanging.String():
+		return RegimeRanging, true
+	case RegimeVolatile.String():
+		return RegimeVolatile, true
+	case RegimeBreakout.String():
+		return RegimeBreakout, true
+	case RegimeUnknown.String():
+		return RegimeUnknown, true
+	default:
+		return RegimeUnknown, false
+	}
 }

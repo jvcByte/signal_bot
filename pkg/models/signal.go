@@ -15,6 +15,9 @@ type Signal struct {
 	ReceivedAt       time.Time
 	ProcessedAt      *time.Time
 	Raw              string
+	// Analyzer metadata for live calibration (optional, from signal generator)
+	AnalyzerScore  float64
+	AnalyzerRegime string
 }
 
 // MartingaleTime represents a martingale re-entry level

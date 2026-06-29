@@ -3,13 +3,13 @@ package bot
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
+	"signal-bot/internal/analyzer"
 	"signal-bot/internal/config"
 	"signal-bot/internal/database"
 	"signal-bot/internal/parser"
@@ -34,6 +34,11 @@ type Bot struct {
 	// dedup: track recently seen signal hashes to avoid trading duplicates
 	recentSignals   map[string]time.Time
 	recentSignalsMu sync.Mutex
+
+	// live calibration from executed trade outcomes
+	calibration     *analyzer.ConfidenceModel
+	calibrationPath string
+	allowedHoursUTC []int
 }
 
 type DailyStats struct {
@@ -70,7 +75,29 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Bot, error) {
 		logger:        logger,
 		dailyStats:    stats,
 		recentSignals: make(map[string]time.Time),
+		calibration:   analyzer.NewConfidenceModel(),
+		calibrationPath: calibrationPath(cfg),
+		allowedHoursUTC: allowedHours(cfg),
 	}, nil
+}
+
+func calibrationPath(cfg *config.Config) string {
+	if cfg.Analyzer.CalibrationPath != "" {
+		return cfg.Analyzer.CalibrationPath
+	}
+	return "data/confidence.json"
+}
+
+func allowedHours(cfg *config.Config) []int {
+	if len(cfg.Analyzer.AllowedHoursUTC) > 0 {
+		return append([]int(nil), cfg.Analyzer.AllowedHoursUTC...)
+	}
+	if cfg.Analyzer.AllowedHoursFile != "" {
+		if hours, err := analyzer.LoadAllowedHoursFile(cfg.Analyzer.AllowedHoursFile); err == nil {
+			return hours
+		}
+	}
+	return nil
 }
 
 func (b *Bot) Start(ctx context.Context) error {
@@ -82,6 +109,12 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.logger.Info().Msg("→ Step 1/3: Connecting to IQ Option via WebSocket API...")
 	if err := b.trader.Connect(); err != nil {
 		return fmt.Errorf("trader connect: %w", err)
+	}
+
+	if err := b.calibration.LoadFromFile(b.calibrationPath); err != nil {
+		b.logger.Warn().Str("path", b.calibrationPath).Msg("No calibration file loaded (will create on first outcome)")
+	} else {
+		b.logger.Info().Str("path", b.calibrationPath).Msg("✓ Calibration model loaded")
 	}
 
 	// Register trade result handler
@@ -109,8 +142,15 @@ func (b *Bot) Start(ctx context.Context) error {
 }
 
 func (b *Bot) handleMessage(ctx context.Context, message string) error {
+	if len(message) == 0 {
+		return nil
+	}
+	preview := message
+	if len(preview) > 100 {
+		preview = preview[:100]
+	}
 	b.logger.Info().Msg("───────────────────────────────────────")
-	b.logger.Info().Str("preview", message[:min(100, len(message))]).Msg("📨 NEW MESSAGE RECEIVED")
+	b.logger.Info().Str("preview", preview).Msg("📨 NEW MESSAGE RECEIVED")
 	
 	// Log the full message for debugging
 	b.logger.Debug().Str("full_message", message).Msg("complete message content")
@@ -160,6 +200,22 @@ func (b *Bot) handleMessage(ctx context.Context, message string) error {
 			delete(b.recentSignals, k)
 		}
 	}
+	// Cap map size to prevent unbounded growth
+	const maxRecentSignals = 500
+	if len(b.recentSignals) > maxRecentSignals {
+		// Remove oldest entries to stay under cap
+		oldest := time.Now()
+		oldestKey := ""
+		for k, t := range b.recentSignals {
+			if t.Before(oldest) {
+				oldest = t
+				oldestKey = k
+			}
+		}
+		if oldestKey != "" {
+			delete(b.recentSignals, oldestKey)
+		}
+	}
 	b.recentSignalsMu.Unlock()
 
 	b.logger.Debug().Msg("saving signal to database...")
@@ -204,17 +260,23 @@ func (b *Bot) shouldTrade(signal *models.Signal) bool {
 		return true
 	}
 
-	b.dailyStats.mu.RLock()
-	defer b.dailyStats.mu.RUnlock()
-
-	// Reset daily stats if new calendar day
+	// Check if we need a daily reset (without holding any lock)
 	now := time.Now()
-	if b.dailyStats.LastReset.Day() != now.Day() || b.dailyStats.LastReset.Month() != now.Month() {
+	b.dailyStats.mu.RLock()
+	needsReset := b.dailyStats.LastReset.Day() != now.Day() || b.dailyStats.LastReset.Month() != now.Month()
+	b.dailyStats.mu.RUnlock()
+
+	if needsReset {
+		b.dailyStats.mu.Lock()
 		b.logger.Info().Msg("  resetting daily statistics (new day)")
 		b.dailyStats.TradesCount = 0
 		b.dailyStats.TotalLoss = 0
 		b.dailyStats.LastReset = now
+		b.dailyStats.mu.Unlock()
 	}
+
+	b.dailyStats.mu.RLock()
+	defer b.dailyStats.mu.RUnlock()
 
 	// Check daily trade limit (0 = unlimited)
 	b.logger.Debug().
@@ -239,6 +301,13 @@ func (b *Bot) shouldTrade(signal *models.Signal) bool {
 			Float64("confidence", signal.Confidence*100).
 			Float64("required", b.cfg.Risk.MinSignalConfidence*100).
 			Msg("  ⛔ signal confidence too low")
+		return false
+	}
+
+	if !analyzer.IsAllowedHourUTC(time.Now().UTC().Hour(), b.allowedHoursUTC) {
+		b.logger.Warn().
+			Int("utc_hour", time.Now().UTC().Hour()).
+			Msg("  ⛔ UTC hour not in allowed trading window")
 		return false
 	}
 
@@ -438,6 +507,18 @@ func (b *Bot) handleTradeResult(result wstrader.TradeResult) {
 		b.logger.Error().Err(err).Str("trade_id", result.TradeID).Msg("failed to update trade result")
 	}
 
+	if result.Signal != nil && analyzer.RecordSignalOutcome(b.calibration, result.Signal, result.Win) {
+		if err := b.calibration.SaveToFile(b.calibrationPath); err != nil {
+			b.logger.Error().Err(err).Msg("failed to save calibration model")
+		} else {
+			b.logger.Debug().
+				Float64("score", result.Signal.AnalyzerScore).
+				Str("regime", result.Signal.AnalyzerRegime).
+				Bool("won", result.Win).
+				Msg("calibration model updated")
+		}
+	}
+
 	if !result.Win {
 		// Update daily P&L
 		b.dailyStats.mu.Lock()
@@ -460,20 +541,21 @@ func (b *Bot) handleTradeResult(result wstrader.TradeResult) {
 func (b *Bot) tryMartingale(result wstrader.TradeResult) {
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "[ERROR] panic in tryMartingale: %v\n", r)
+			b.logger.Error().
+				Str("panic_msg", fmt.Sprintf("%v", r)).
+				Msg("panic recovered in tryMartingale")
 		}
 	}()
 
-	signal := result.Signal
-	if signal == nil || len(signal.MartingaleLevels) == 0 {
+	if result.Signal == nil {
 		return
 	}
-
-	b.logger.Debug().
-		Int("levels", len(signal.MartingaleLevels)).
-		Float64("amount", result.Amount).
-		Msg("tryMartingale: checking levels")
-	if signal == nil || len(signal.MartingaleLevels) == 0 {
+	signal := result.Signal
+	if len(signal.MartingaleLevels) == 0 {
+		return
+	}
+	if result.Amount <= 0 {
+		b.logger.Warn().Msg("tryMartingale: invalid trade amount, skipping")
 		return
 	}
 
@@ -498,8 +580,12 @@ func (b *Bot) tryMartingale(result wstrader.TradeResult) {
 			waitFor = 0
 		}
 
-		fmt.Fprintf(os.Stderr, "[MARTINGALE] level=%d entry=%s amount=%.2f wait=%.0fs\n",
-			ml.Level, ml.Time.Format("15:04:05"), newAmount, waitFor.Seconds())
+		b.logger.Info().
+			Int("level", ml.Level).
+			Str("entry", ml.Time.Format("15:04:05")).
+			Float64("amount", newAmount).
+			Float64("wait_sec", waitFor.Seconds()).
+			Msg("🔄 Martingale level queued")
 
 		// Create a new signal clone with updated amount and entry window
 		martingaleSignal := *signal // copy
@@ -514,9 +600,9 @@ func (b *Bot) tryMartingale(result wstrader.TradeResult) {
 		}
 
 		if err := b.queue.Push(&martingaleSignal); err != nil {
-			fmt.Fprintf(os.Stderr, "[MARTINGALE] failed to queue level %d: %v\n", ml.Level, err)
+			b.logger.Error().Err(err).Int("level", ml.Level).Msg("Failed to queue martingale level")
 		} else {
-			fmt.Fprintf(os.Stderr, "[MARTINGALE] queued level %d amount=%.2f\n", ml.Level, newAmount)
+			b.logger.Info().Int("level", ml.Level).Float64("amount", newAmount).Msg("🔄 Martingale level queued")
 		}
 		return
 	}

@@ -35,10 +35,7 @@ func main() {
 	}
 	defer trader.Close()
 
-	analyzerCfg := analyzer.DefaultConfig()
-	if cfg.Analyzer.SignalThreshold > 0 {
-		analyzerCfg.SignalThreshold = float64(cfg.Analyzer.SignalThreshold)
-	}
+	analyzerCfg := analyzer.ApplyYAMLConfig(analyzer.DefaultConfig(), cfg.Analyzer)
 
 	assets := cfg.Analyzer.Assets
 	if len(assets) == 0 {
@@ -49,7 +46,7 @@ func main() {
 
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
-	fmt.Println("║           CONFIDENCE MODEL CALIBRATION                      ║")
+	fmt.Println("║           CONFIDENCE MODEL CALIBRATION                       ║")
 	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
 	fmt.Printf("  Assets: %d  Candles: %d  Min-trades: %d\n\n", len(assets), *candles, *minTrades)
 

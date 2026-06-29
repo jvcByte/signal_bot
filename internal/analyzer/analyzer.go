@@ -40,6 +40,9 @@ type AnalyzerConfig struct {
 	VolumeMultiplier float64
 	// Multi-timeframe
 	EnableMTF bool
+	// High-selectivity filters
+	AllowedRegimes  []Regime
+	AllowedHoursUTC []int
 	// Score calibration from backtest (optional)
 	ScoreTierMap map[int]ScoreTierStats
 	// Position sizing
@@ -122,13 +125,20 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 	// ── Step 1: Extract feature vector (includes regime detection)
 	fv := ExtractFeatures(input, a.config)
 
-	// ── Step 2: Run filter chain (replaces manual regime check)
-	chain := NewFilterChain(
-		&RegimeFilter{},
-		&LowVolatilityFilter{MinATRPct: 0.03},
-		&HighVolatilityFilter{MaxATRPct: 0.8},
-		&ADXFilter{MinADX: 15},
-	)
+	// ── Step 2: Hour filter (UTC)
+	if len(a.config.AllowedHoursUTC) > 0 {
+		hourFilter := &HourFilter{AllowedHours: a.config.AllowedHoursUTC}
+		if pass, reason := hourFilter.Apply(fv, a.config); !pass {
+			a.logger.Debug().
+				Str("asset", asset).
+				Str("reason", reason).
+				Msg("⏭  Signal filtered")
+			return nil, nil
+		}
+	}
+
+	// ── Step 3: Run filter chain (regime, volatility, ADX)
+	chain := BuildFilterChain(a.config)
 	if pass, reason := chain.Apply(fv, a.config); !pass {
 		a.logger.Debug().
 			Str("asset", asset).
@@ -214,14 +224,16 @@ func (a *SignalAnalyzer) AnalyzeAsset(asset string) (*models.Signal, error) {
 	tradeAmount := CalculateSize(a.config.Sizing, confidence, 0.87, 100.0, fv.ATRPct)
 
 	signal := &models.Signal{
-		Asset:       asset,
-		Direction:   direction,
-		Expiry:      a.config.ExpiryMinutes,
-		Confidence:  confidence,
-		Amount:      tradeAmount,
-		EntryWindow: entryWindow,
-		Source:      "jvcbyte-analyzer",
-		ReceivedAt:  time.Now(),
+		Asset:           asset,
+		Direction:       direction,
+		Expiry:          a.config.ExpiryMinutes,
+		Confidence:      confidence,
+		Amount:          tradeAmount,
+		EntryWindow:     entryWindow,
+		Source:          "jvcbyte-analyzer",
+		ReceivedAt:      time.Now(),
+		AnalyzerScore:   result.Score,
+		AnalyzerRegime:  fv.Regime.String(),
 	}
 
 	if a.config.EnableMartingale {

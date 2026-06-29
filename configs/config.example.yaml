@@ -29,30 +29,33 @@ trading:
 risk:
   enabled: true
   max_trades_per_day: 0               # 0 = unlimited
-  min_signal_confidence: 0.60        # Minimum confidence to execute (0.0–1.0)
+  min_signal_confidence: 0.85        # match analyzer.min_confidence for high-selectivity
   martingale: true                    # Double stake after a loss
   martingale_max: 3                   # Max martingale levels (0 = no cap)
 
 # ── Signal Analyzer (JVCBYTE BLITZ signal generator) ─────────────
 analyzer:
-  # How strict the signal must be.
-  # 3 = more signals, lower quality
-  # 5 = fewer signals, higher quality
-  # Recommended: 4
-  signal_threshold: 4
+  # ── High-selectivity profile (fewer trades, higher win rate) ───
+  # Uncomment/adjust after backtesting. Defaults below are conservative.
+  signal_threshold: 6          # min weighted score (4=normal, 6=strict)
+  min_confidence: 0.85         # reject signals below 85% calibrated confidence
+  expiry_seconds: 120            # 2-minute trades (less noise than 30s)
+  signal_cooldown: 15          # minutes between signals on same asset
+
+  # Only trade in regimes that backtest well (skip Volatile/Breakout/Unknown)
+  allowed_regimes:
+    - Trending
+    - Ranging
+
+  # UTC hours with ≥70% win rate — export via backtest, then enable:
+  #   go run cmd/backtest/main.go -export-hours data/allowed_hours.json
+  allowed_hours_file: data/allowed_hours.json
+  # allowed_hours_utc: [8, 9, 14, 15]  # or set manually
+
+  calibration_path: data/confidence.json
 
   # How often to scan the market (seconds)
   interval_seconds: 60
-
-  # Minimum gap between signals for the same asset (minutes)
-  signal_cooldown: 7
-
-  # Trade expiry duration in seconds
-  # 30  = 30-second trades (high frequency, needs fast market)
-  # 60  = 1-minute trades
-  # 120 = 2-minute trades (classic binary options)
-  # 300 = 5-minute trades
-  expiry_seconds: 30
 
   # ── Asset type filter ──────────────────────────────────────────
   # Choose which categories to analyze.

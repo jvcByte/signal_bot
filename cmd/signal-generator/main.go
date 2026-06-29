@@ -66,20 +66,14 @@ func main() {
 	time.Sleep(2 * time.Second)
 
 	// Create analyzer with config-driven settings
-	analyzerCfg := analyzer.DefaultConfig()
-	if cfg.Analyzer.SignalThreshold > 0 {
-		analyzerCfg.SignalThreshold = float64(cfg.Analyzer.SignalThreshold)
-	}
-	if cfg.Analyzer.SignalCooldown > 0 {
-		analyzerCfg.SignalCooldown = cfg.Analyzer.SignalCooldown
-	}
-	if cfg.Analyzer.ExpirySeconds > 0 {
-		analyzerCfg.ExpiryMinutes = cfg.Analyzer.ExpirySeconds
-	}
+	analyzerCfg := analyzer.ApplyYAMLConfig(analyzer.DefaultConfig(), cfg.Analyzer)
 	an := analyzer.New(trader, logger, analyzerCfg)
 
 	// Load calibrated confidence model if it exists
-	confidencePath := "data/confidence.json"
+	confidencePath := cfg.Analyzer.CalibrationPath
+	if confidencePath == "" {
+		confidencePath = "data/confidence.json"
+	}
 	if err := an.LoadConfidenceModel(confidencePath); err != nil {
 		logger.Warn().Msg("⚠️  No calibrated confidence model found - signals will use conservative estimates")
 		logger.Warn().Msg("   Run: go run cmd/calibrate/main.go to calibrate")
@@ -126,7 +120,11 @@ func main() {
 		Strs("assets", validAssets).
 		Int("interval_sec", intervalSec).
 		Float64("signal_threshold", analyzerCfg.SignalThreshold).
+		Float64("min_confidence", analyzerCfg.MinConfidence).
+		Strs("allowed_regimes", regimeNames(analyzerCfg.AllowedRegimes)).
+		Ints("allowed_hours_utc", analyzerCfg.AllowedHoursUTC).
 		Int("signal_cooldown_min", analyzerCfg.SignalCooldown).
+		Int("expiry_sec", analyzerCfg.ExpiryMinutes).
 		Msg("✓ Signal generator ready")
 
 	logger.Info().Msg("═══════════════════════════════════════")
@@ -225,6 +223,7 @@ func formatSignalMessage(signal *models.Signal) string {
 🤖  AI Confidence: %.0f%%
 🕰️  Entry Window: %s
 Direction: %s %s
+📐  Score: %.1f | Regime: %s
 
 📊  Martingale Levels:`,
 		assetArrow,
@@ -234,6 +233,8 @@ Direction: %s %s
 		signal.EntryWindow.Format("3:04 PM"),
 		directionEmoji,
 		direction,
+		signal.AnalyzerScore,
+		signal.AnalyzerRegime,
 	)
 
 	for _, ml := range signal.MartingaleLevels {
@@ -241,4 +242,12 @@ Direction: %s %s
 	}
 
 	return msg
+}
+
+func regimeNames(regimes []analyzer.Regime) []string {
+	names := make([]string, len(regimes))
+	for i, r := range regimes {
+		names[i] = r.String()
+	}
+	return names
 }

@@ -41,7 +41,31 @@ func main() {
 	an := analyzer.New(trader, logger, analyzerCfg)
 
 	// Test assets
-	assets := []string{"EURUSD", "GBPUSD", "AUDUSD", "USDJPY", "OPENAI"}
+	// assets := []string{"EURUSD", "GBPUSD", "AUDUSD", "USDJPY", "OPENAI"}
+	assets := []string{
+    // Forex
+    "EURUSD", "GBPUSD", "AUDUSD", "USDJPY", "USDCAD",
+    "USDCHF", "EURJPY", "GBPJPY", "AUDJPY", "AUDCAD",
+    "EURGBP", "EURAUD", "EURCAD", "GBPAUD", "GBPCAD",
+    "CHFJPY", "CADCHF", "AUDCHF", "AUDNZD", "NZDCAD",
+    "NZDJPY", "GBPCHF", "GBPNZD",
+
+    // Crypto OTC
+    "ETHUSD", "XRPUSD", "SOLUSD", "DOGECOIN", "CARDANO",
+    "LTCUSD", "TONUSD", "BCHUSD",
+
+    // Stocks OTC
+    "OPENAI", "ANTHROPIC", "TESLA", "APPLE", "AMAZON",
+    "GOOGLE", "MSFT", "NVDA", "FB", "SNAP",
+    "SPACEX", "PLTR",
+
+    // Indices
+    "SP500", "US30", "USNDAQ100", "GER30", "UK100",
+    "EU50", "JP225", "AUS200", "HK33",
+
+    // Commodities
+    "XAUUSD", "XAGUSD", "USOUSD", "UKOUSD",
+}
 
 	logger.Info().Msg("═══════════════════════════════════════")
 	logger.Info().Msg("🔍 Analyzing assets...")

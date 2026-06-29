@@ -15,9 +15,14 @@ import (
 )
 
 func main() {
-	assetsFlag := flag.String("assets", "EURUSD,GBPUSD,AUDUSD,USDJPY,OPENAI", "Comma-separated assets to backtest")
+	trade_assets := "EURUSD,GBPUSD,AUDUSD,USDJPY,USDCAD,USDCHF,EURJPY,GBPJPY,AUDJPY,AUDCAD,EURGBP,EURAUD,EURCAD,GBPAUD,GBPCAD,CHFJPY,CADCHF,AUDCHF,AUDNZD,NZDCAD,NZDJPY,GBPCHF,GBPNZD,ETHUSD,XRPUSD,SOLUSD,DOGECOIN,CARDANO,LTCUSD,TONUSD,BCHUSD,OPENAI,ANTHROPIC,TESLA,APPLE,AMAZON,GOOGLE,MSFT,NVDA,FB,SNAP,SPACEX,PLTR,SP500,US30,USNDAQ100,GER30,UK100,EU50,JP225,AUS200,HK33,XAUUSD,XAGUSD,USOUSD,UKOUSD"
+	assetsFlag := flag.String("assets", trade_assets, "Comma-separated assets to backtest")
 	candles    := flag.Int("candles", 500, "Number of 1m candles to use (max ~500)")
 	configPath := flag.String("config", "configs/config.yaml", "Config file path")
+	threshold  := flag.Float64("threshold", 0, "Override signal threshold (0 = use config)")
+	exportHours := flag.String("export-hours", "", "Write recommended UTC hours to JSON file")
+	minHourWinRate := flag.Float64("min-hour-win-rate", 0.70, "Min win rate for hour export")
+	minHourTrades  := flag.Int("min-hour-trades", 3, "Min trades per hour for hour export")
 	flag.Parse()
 
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: "15:04:05"}).
@@ -35,18 +40,22 @@ func main() {
 	}
 	defer trader.Close()
 
-	analyzerCfg := analyzer.DefaultConfig()
+	analyzerCfg := analyzer.ApplyYAMLConfig(analyzer.DefaultConfig(), cfg.Analyzer)
+	if *threshold > 0 {
+		analyzerCfg.SignalThreshold = *threshold
+	}
 	assets := strings.Split(*assetsFlag, ",")
 
 	fmt.Println()
 	fmt.Println("╔════════════════════════════════════════════════════════════╗")
-	fmt.Println("║                  BACKTEST RESULTS                         ║")
+	fmt.Println("║                  BACKTEST RESULTS                          ║")
 	fmt.Println("╚════════════════════════════════════════════════════════════╝")
 	fmt.Printf("  Period: last %d 1-minute candles per asset\n", *candles)
 	fmt.Printf("  Strategy: RSI + EMA + Bollinger + MACD + Volume + Patterns + MTF + Regime\n\n")
 
 	totalTrades := 0
 	totalWins   := 0
+	aggregateHours := make(map[int]analyzer.HourStats)
 
 	for _, asset := range assets {
 		asset = strings.TrimSpace(strings.ToUpper(asset))
@@ -145,6 +154,15 @@ func main() {
 
 		totalTrades += result.TotalTrades
 		totalWins   += result.Wins
+		for hour, hs := range result.ByHour {
+			agg := aggregateHours[hour]
+			agg.Trades += hs.Trades
+			agg.Wins += hs.Wins
+			if agg.Trades > 0 {
+				agg.WinRate = float64(agg.Wins) / float64(agg.Trades)
+			}
+			aggregateHours[hour] = agg
+		}
 	}
 
 	fmt.Println("──────────────────────────────────────────────────────────────")
@@ -158,6 +176,21 @@ func main() {
 			fmt.Println("  ⚠️  Strategy is marginal (55-65% win rate) - use with caution")
 		} else {
 			fmt.Println("  ❌ Strategy underperforms (<55% win rate) - needs tuning")
+		}
+	}
+
+	if *exportHours != "" {
+		hours := analyzer.RecommendHours(aggregateHours, *minHourWinRate, *minHourTrades)
+		if err := analyzer.SaveAllowedHoursFile(*exportHours, hours); err != nil {
+			log.Fatalf("export hours: %v", err)
+		}
+		fmt.Printf("  ✓ Exported %d UTC hours (≥%.0f%% WR, ≥%d trades) to %s\n",
+			len(hours), *minHourWinRate*100, *minHourTrades, *exportHours)
+		if len(hours) > 0 {
+			fmt.Printf("    Hours: %v\n", hours)
+			fmt.Println("    Set analyzer.allowed_hours_file in config.yaml to use these hours.")
+		} else {
+			fmt.Println("    No hours met the criteria — try lowering -min-hour-win-rate or -min-hour-trades.")
 		}
 	}
 	fmt.Println()

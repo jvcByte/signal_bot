@@ -82,6 +82,13 @@ func ParseMexyDetailed(text string) (*MexySignal, error) {
 	} else {
 		signal.Confidence = 0.8
 	}
+	// Clamp confidence to valid range
+	if signal.Confidence < 0 {
+		signal.Confidence = 0
+	}
+	if signal.Confidence > 1 {
+		signal.Confidence = 1
+	}
 
 	// Extract direction
 	directionRegex := regexp.MustCompile(`(?i)direction:\s*(?:🟢|🔴)?\s*(BUY|SELL|CALL|PUT)`)
@@ -94,6 +101,13 @@ func ParseMexyDetailed(text string) (*MexySignal, error) {
 		}
 	} else {
 		return nil, fmt.Errorf("direction not found")
+	}
+
+	// Optional analyzer metadata (from JVCBYTE signal generator)
+	metaRegex := regexp.MustCompile(`(?i)score:\s*([0-9.+-]+)\s*\|\s*regime:\s*(\w+)`)
+	if matches := metaRegex.FindStringSubmatch(text); matches != nil {
+		signal.AnalyzerScore, _ = strconv.ParseFloat(matches[1], 64)
+		signal.AnalyzerRegime = matches[2]
 	}
 
 	// Extract entry window
@@ -109,12 +123,17 @@ func ParseMexyDetailed(text string) (*MexySignal, error) {
 			hour = 0
 		}
 
-		now := time.Now()
-		signal.EntryWindow = time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
-		
-		// If entry window is in the past, assume it's for tomorrow
-		if signal.EntryWindow.Before(now) {
-			signal.EntryWindow = signal.EntryWindow.Add(24 * time.Hour)
+		// Validate time bounds
+		if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+			// Skip invalid time, leave EntryWindow zero
+		} else {
+			now := time.Now()
+			signal.EntryWindow = time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+
+			// If entry window is in the past, assume it's for tomorrow
+			if signal.EntryWindow.Before(now) {
+				signal.EntryWindow = signal.EntryWindow.Add(24 * time.Hour)
+			}
 		}
 	}
 

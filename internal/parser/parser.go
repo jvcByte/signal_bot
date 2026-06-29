@@ -22,7 +22,6 @@ type Pattern struct {
 func New() *Parser {
 	return &Parser{
 		patterns: []*Pattern{
-			newMexyPattern(),
 			newPattern1(),
 			newPattern2(),
 			newPattern3(),
@@ -124,32 +123,6 @@ func newPattern3() *Pattern {
 				Asset:     asset,
 				Direction: direction,
 				Expiry:    expiry,
-			}, nil
-		},
-	}
-}
-
-// Mexy Binary Pattern: Multi-line format with AI confidence and martingale levels
-func newMexyPattern() *Pattern {
-	regex := regexp.MustCompile(`(?s).*?([A-Z]{3}/[A-Z]{3}).*?TIMEFRAME:\s*(\d+)-MIN.*?AI\s*CONFIDENCE:\s*(\d+)%.*?DIRECTION:\s*(BUY|SELL|CALL|PUT)`)
-	return &Pattern{
-		regex: regex,
-		extractor: func(matches []string) (*models.Signal, error) {
-			asset := normalizeAsset(matches[1])
-			expiry, _ := strconv.Atoi(matches[2])
-			confidence, _ := strconv.Atoi(matches[3])
-			
-			direction := models.DirectionCall
-			dirStr := strings.ToUpper(matches[4])
-			if dirStr == "SELL" || dirStr == "PUT" {
-				direction = models.DirectionPut
-			}
-			
-			return &models.Signal{
-				Asset:      asset,
-				Direction:  direction,
-				Expiry:     expiry,
-				Confidence: float64(confidence) / 100.0,
 			}, nil
 		},
 	}

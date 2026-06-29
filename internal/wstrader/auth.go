@@ -56,18 +56,23 @@ func (t *Trader) connectOnce() error {
 	return nil
 }
 
-// reconnectLoop watches for disconnection and reconnects with backoff
+// reconnectLoop watches for disconnection and reconnects with backoff.
+// Stops after maxReconnectAttempts to avoid infinite loops when service is down.
 func (t *Trader) reconnectLoop() {
+	const maxReconnectAttempts = 20 // ~5 minutes total with backoff
 	backoff := []time.Duration{3 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second, 60 * time.Second}
-	attempt := 0
 
 	for {
-		// Wait for current connection to drop
 		<-t.done
 
 		t.logger.Warn().Msg("⚠️  WebSocket disconnected - reconnecting...")
+		attempt := 0
 
 		for {
+			if attempt >= maxReconnectAttempts {
+				t.logger.Error().Int("attempts", attempt).Msg("❌ Max reconnect attempts reached - giving up")
+				return
+			}
 			delay := backoff[min(attempt, len(backoff)-1)]
 			t.logger.Info().Dur("wait", delay).Int("attempt", attempt+1).Msg("🔄 Reconnect attempt...")
 			time.Sleep(delay)
@@ -79,7 +84,6 @@ func (t *Trader) reconnectLoop() {
 			}
 
 			t.logger.Info().Msg("✅ Reconnected to IQ Option WebSocket")
-			attempt = 0 // reset backoff on success
 			break
 		}
 	}
@@ -139,7 +143,12 @@ func (t *Trader) dialWS() error {
 	headers.Set("Origin", "https://iqoption.com")
 	headers.Set("User-Agent", "Mozilla/5.0")
 
-	conn, _, err := websocket.DefaultDialer.Dial(iqOptionWSURL, headers)
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 15 * time.Second,
+		ReadBufferSize:   4096,
+		WriteBufferSize:  4096,
+	}
+	conn, _, err := dialer.Dial(iqOptionWSURL, headers)
 	if err != nil {
 		return err
 	}
