@@ -133,6 +133,10 @@ func (t *Trader) GetHistoricalCandles(asset string, timeframe int, count int) ([
 		}
 	}
 
+	if len(candles) == 0 {
+		return nil, fmt.Errorf("no candles returned for %s (WebSocket may have disconnected)", asset)
+	}
+
 	t.logger.Info().
 		Str("asset", asset).
 		Int("count", len(candles)).

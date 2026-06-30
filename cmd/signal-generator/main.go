@@ -152,6 +152,12 @@ func main() {
 }
 
 func analyzeAndSendSignals(ctx context.Context, an *analyzer.SignalAnalyzer, tg *telegram.Client, assets []string, logger zerolog.Logger, channelID int64) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error().Str("panic", fmt.Sprintf("%v", r)).Msg("panic in analyzeAndSendSignals - skipping cycle")
+		}
+	}()
+
 	logger.Info().Msg("─────────────────────────────────────")
 	logger.Info().Msg("🔍 Analyzing market conditions...")
 
