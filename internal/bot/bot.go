@@ -562,6 +562,11 @@ func (b *Bot) tryMartingale(result wstrader.TradeResult) {
 	now := time.Now()
 
 	for i, ml := range signal.MartingaleLevels {
+		// Guard: i must be a valid index
+		if i >= len(signal.MartingaleLevels) {
+			break
+		}
+
 		// Skip levels beyond configured max
 		if b.cfg.Risk.MartingaleMax > 0 && ml.Level > b.cfg.Risk.MartingaleMax {
 			break
@@ -585,16 +590,19 @@ func (b *Bot) tryMartingale(result wstrader.TradeResult) {
 			Str("entry", ml.Time.Format("15:04:05")).
 			Float64("amount", newAmount).
 			Float64("wait_sec", waitFor.Seconds()).
-			Msg("🔄 Martingale level queued")
+			Msg("🔄 Queuing martingale level")
 
 		// Create a new signal clone with updated amount and entry window
 		martingaleSignal := *signal // copy
 		martingaleSignal.ID = uuid.New().String()
 		martingaleSignal.EntryWindow = ml.Time
 		martingaleSignal.Amount = newAmount
-		// Pass remaining levels (safe slice)
-		if i+1 < len(signal.MartingaleLevels) {
-			martingaleSignal.MartingaleLevels = signal.MartingaleLevels[i+1:]
+		// Pass remaining levels safely - only levels after current index
+		nextIdx := i + 1
+		if nextIdx < len(signal.MartingaleLevels) {
+			remaining := make([]models.MartingaleTime, len(signal.MartingaleLevels)-nextIdx)
+			copy(remaining, signal.MartingaleLevels[nextIdx:])
+			martingaleSignal.MartingaleLevels = remaining
 		} else {
 			martingaleSignal.MartingaleLevels = nil
 		}
@@ -602,7 +610,7 @@ func (b *Bot) tryMartingale(result wstrader.TradeResult) {
 		if err := b.queue.Push(&martingaleSignal); err != nil {
 			b.logger.Error().Err(err).Int("level", ml.Level).Msg("Failed to queue martingale level")
 		} else {
-			b.logger.Info().Int("level", ml.Level).Float64("amount", newAmount).Msg("🔄 Martingale level queued")
+			b.logger.Info().Int("level", ml.Level).Float64("amount", newAmount).Msg("✓ Martingale level queued")
 		}
 		return
 	}
