@@ -103,13 +103,6 @@ func ParseMexyDetailed(text string) (*MexySignal, error) {
 		return nil, fmt.Errorf("direction not found")
 	}
 
-	// Optional analyzer metadata (from JVCBYTE signal generator)
-	metaRegex := regexp.MustCompile(`(?i)score:\s*([0-9.+-]+)\s*\|\s*regime:\s*(\w+)`)
-	if matches := metaRegex.FindStringSubmatch(text); matches != nil {
-		signal.AnalyzerScore, _ = strconv.ParseFloat(matches[1], 64)
-		signal.AnalyzerRegime = matches[2]
-	}
-
 	// Extract entry window
 	entryRegex := regexp.MustCompile(`(?i)(?:🕰️\s+)?entry\s*window:\s*(\d{1,2}):(\d{2})\s*(AM|PM)`)
 	if matches := entryRegex.FindStringSubmatch(text); matches != nil {

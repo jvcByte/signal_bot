@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
-	"signal-bot/internal/analyzer"
 	"signal-bot/internal/config"
 	"signal-bot/internal/database"
 	"signal-bot/internal/parser"
@@ -32,14 +31,8 @@ type Bot struct {
 	mu         sync.RWMutex
 	dailyStats *DailyStats
 
-	// dedup: track recently seen signal hashes to avoid trading duplicates
 	recentSignals   map[string]time.Time
 	recentSignalsMu sync.Mutex
-
-	// live calibration from executed trade outcomes
-	calibration     *analyzer.ConfidenceModel
-	calibrationPath string
-	allowedHoursUTC []int
 }
 
 type DailyStats struct {
@@ -76,29 +69,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Bot, error) {
 		logger:        logger,
 		dailyStats:    stats,
 		recentSignals: make(map[string]time.Time),
-		calibration:   analyzer.NewConfidenceModel(),
-		calibrationPath: calibrationPath(cfg),
-		allowedHoursUTC: allowedHours(cfg),
 	}, nil
-}
-
-func calibrationPath(cfg *config.Config) string {
-	if cfg.Analyzer.CalibrationPath != "" {
-		return cfg.Analyzer.CalibrationPath
-	}
-	return "data/confidence.json"
-}
-
-func allowedHours(cfg *config.Config) []int {
-	if len(cfg.Analyzer.AllowedHoursUTC) > 0 {
-		return append([]int(nil), cfg.Analyzer.AllowedHoursUTC...)
-	}
-	if cfg.Analyzer.AllowedHoursFile != "" {
-		if hours, err := analyzer.LoadAllowedHoursFile(cfg.Analyzer.AllowedHoursFile); err == nil {
-			return hours
-		}
-	}
-	return nil
 }
 
 func (b *Bot) Start(ctx context.Context) error {
@@ -110,12 +81,6 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.logger.Info().Msg("→ Step 1/3: Connecting to IQ Option via WebSocket API...")
 	if err := b.trader.Connect(); err != nil {
 		return fmt.Errorf("trader connect: %w", err)
-	}
-
-	if err := b.calibration.LoadFromFile(b.calibrationPath); err != nil {
-		b.logger.Warn().Str("path", b.calibrationPath).Msg("No calibration file loaded (will create on first outcome)")
-	} else {
-		b.logger.Info().Str("path", b.calibrationPath).Msg("✓ Calibration model loaded")
 	}
 
 	// Register trade result handler
@@ -302,13 +267,6 @@ func (b *Bot) shouldTrade(signal *models.Signal) bool {
 			Float64("confidence", signal.Confidence*100).
 			Float64("required", b.cfg.Risk.MinSignalConfidence*100).
 			Msg("  ⛔ signal confidence too low")
-		return false
-	}
-
-	if !analyzer.IsAllowedHourUTC(time.Now().UTC().Hour(), b.allowedHoursUTC) {
-		b.logger.Warn().
-			Int("utc_hour", time.Now().UTC().Hour()).
-			Msg("  ⛔ UTC hour not in allowed trading window")
 		return false
 	}
 
@@ -506,18 +464,6 @@ func (b *Bot) handleTradeResult(result wstrader.TradeResult) {
 	}
 	if err := b.db.UpdateTrade(trade); err != nil {
 		b.logger.Error().Err(err).Str("trade_id", result.TradeID).Msg("failed to update trade result")
-	}
-
-	if result.Signal != nil && analyzer.RecordSignalOutcome(b.calibration, result.Signal, result.Win) {
-		if err := b.calibration.SaveToFile(b.calibrationPath); err != nil {
-			b.logger.Error().Err(err).Msg("failed to save calibration model")
-		} else {
-			b.logger.Debug().
-				Float64("score", result.Signal.AnalyzerScore).
-				Str("regime", result.Signal.AnalyzerRegime).
-				Bool("won", result.Win).
-				Msg("calibration model updated")
-		}
 	}
 
 	if !result.Win {

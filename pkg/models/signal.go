@@ -10,14 +10,11 @@ type Signal struct {
 	Amount           float64
 	Confidence       float64
 	Source           string
-	EntryWindow      time.Time        // when to place the initial trade
-	MartingaleLevels []MartingaleTime // re-entry times if trade loses
+	EntryWindow      time.Time
+	MartingaleLevels []MartingaleTime
 	ReceivedAt       time.Time
 	ProcessedAt      *time.Time
 	Raw              string
-	// Analyzer metadata for live calibration (optional, from signal generator)
-	AnalyzerScore  float64
-	AnalyzerRegime string
 }
 
 // MartingaleTime represents a martingale re-entry level
