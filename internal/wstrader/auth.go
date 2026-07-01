@@ -26,8 +26,18 @@ func (t *Trader) Connect() error {
 // connectOnce performs a single connect attempt
 func (t *Trader) connectOnce() error {
 	t.logger.Info().Msg("🔐 Logging in to IQ Option via HTTP...")
-	if err := t.httpLogin(); err != nil {
-		return fmt.Errorf("http login: %w", err)
+	// Retry HTTP login up to 3 times
+	var loginErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		loginErr = t.httpLogin()
+		if loginErr == nil {
+			break
+		}
+		t.logger.Warn().Err(loginErr).Int("attempt", attempt).Msg("HTTP login failed, retrying...")
+		time.Sleep(time.Duration(attempt*3) * time.Second)
+	}
+	if loginErr != nil {
+		return fmt.Errorf("http login: %w", loginErr)
 	}
 	t.logger.Info().Str("ssid", t.ssid[:8]+"...").Msg("✓ SSID obtained")
 
