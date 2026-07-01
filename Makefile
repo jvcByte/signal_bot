@@ -1,4 +1,39 @@
-.PHONY: build run test clean install deps
+.PHONY: build run run-warp test clean install deps warp-setup warp-connect warp-status
+
+build:
+	go build -o bin/signal-bot cmd/bot/main.go
+
+run:
+	go run cmd/bot/main.go -config configs/config.yaml
+
+# Run bot through Cloudflare WARP proxy (use when your IP is blocked by IQ Option)
+# Setup: make warp-setup (first time only)
+# Connect: make warp-connect
+# Then: make run-warp
+run-warp:
+	HTTPS_PROXY=socks5://127.0.0.1:40000 go run cmd/bot/main.go -config configs/config.yaml
+
+# First-time WARP setup
+warp-setup:
+	@echo "Installing Cloudflare WARP..."
+	curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+	echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $$(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+	sudo apt update -qq && sudo apt install cloudflare-warp -y
+	warp-cli registration new
+	warp-cli mode proxy
+	@echo "✓ WARP installed. Run 'make warp-connect' to connect."
+
+# Connect to WARP (run before make run-warp)
+warp-connect:
+	warp-cli connect
+	@sleep 2
+	@warp-cli status
+
+# Check WARP connection status
+warp-status:
+	@warp-cli status
+	@echo "Proxy port: $$(ss -tlnp | grep 40000 | awk '{print $$4}')"
+	@echo "Current IP: $$(HTTPS_PROXY=socks5://127.0.0.1:40000 curl -s --max-time 5 https://api.ipify.org 2>/dev/null || echo 'not connected')"
 
 build:
 	go build -o bin/signal-bot cmd/bot/main.go

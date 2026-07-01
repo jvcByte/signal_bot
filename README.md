@@ -134,3 +134,44 @@ signal-bot/
 └── configs/
     └── config.example.yaml
 ```
+
+## If IQ Option Blocks Your IP
+
+IQ Option may block your IP address after repeated login attempts during development. Here's how to fix it using **Cloudflare WARP** (free, no account required):
+
+### First-time setup
+```bash
+make warp-setup
+```
+This installs WARP and registers your device (takes ~1 minute).
+
+### Every time you need to run through WARP
+```bash
+# Step 1: Connect to WARP
+make warp-connect
+
+# Step 2: Verify it's working (should show a different IP)
+make warp-status
+
+# Step 3: Run the bot through WARP
+make run-warp
+```
+
+### Check WARP status anytime
+```bash
+make warp-status
+```
+
+### How it works
+WARP runs a local SOCKS5 proxy on `127.0.0.1:40000`. The bot routes all IQ Option traffic through Cloudflare's network, giving you a clean IP that IQ Option hasn't blocked.
+
+### To run bot through WARP manually
+```bash
+HTTPS_PROXY=socks5://127.0.0.1:40000 make run
+```
+
+### Once your IP is unblocked
+Switch back to normal mode:
+```bash
+make run
+```

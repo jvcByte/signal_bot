@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -121,9 +122,17 @@ func (t *Trader) httpLogin() error {
 	req.Header.Set("Origin", "https://iqoption.com")
 	req.Header.Set("Referer", "https://iqoption.com/")
 
+	// Use proxy if configured via HTTPS_PROXY or HTTP_PROXY env var
+	transport := http.DefaultTransport
+	if proxyURL := proxyFromEnv(); proxyURL != nil {
+		transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+		t.logger.Info().Str("proxy", proxyURL.Host).Msg("🔀 Using proxy for HTTP login")
+	}
+
 	client := &http.Client{
-		Jar:     t.jar,
-		Timeout: 15 * time.Second,
+		Jar:       t.jar,
+		Timeout:   15 * time.Second,
+		Transport: transport,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -160,6 +169,17 @@ func (t *Trader) httpLogin() error {
 	return fmt.Errorf("SSID not found in login response. Body: %s", string(body))
 }
 
+func proxyFromEnv() *url.URL {
+	for _, env := range []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"} {
+		if val := os.Getenv(env); val != "" {
+			if u, err := url.Parse(val); err == nil {
+				return u
+			}
+		}
+	}
+	return nil
+}
+
 func (t *Trader) dialWS() error {
 	headers := http.Header{}
 	headers.Set("Origin", "https://iqoption.com")
@@ -170,6 +190,13 @@ func (t *Trader) dialWS() error {
 		ReadBufferSize:   4096,
 		WriteBufferSize:  4096,
 	}
+
+	// Use proxy if configured
+	if proxyURL := proxyFromEnv(); proxyURL != nil {
+		dialer.Proxy = http.ProxyURL(proxyURL)
+		t.logger.Info().Str("proxy", proxyURL.Host).Msg("🔀 Using proxy for WebSocket")
+	}
+
 	conn, _, err := dialer.Dial(iqOptionWSURL, headers)
 	if err != nil {
 		return err
