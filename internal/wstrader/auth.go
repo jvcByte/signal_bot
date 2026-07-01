@@ -296,21 +296,8 @@ func (t *Trader) dialWS() error {
 		ReadBufferSize:   4096,
 		WriteBufferSize:  4096,
 	}
-
-	// Use proxy if configured
-	if pURL := proxyFromEnv(); pURL != nil {
-		if pURL.Scheme == "socks5" || pURL.Scheme == "socks5h" {
-			d, err := proxy.FromURL(pURL, proxy.Direct)
-			if err == nil {
-				dialer.NetDial = d.Dial
-				t.logger.Info().Str("proxy", pURL.Host).Msg("🔀 Using SOCKS5 proxy for WebSocket")
-			}
-		} else {
-			dialer.Proxy = http.ProxyURL(pURL)
-			t.logger.Info().Str("proxy", pURL.Host).Msg("🔀 Using proxy for WebSocket")
-		}
-	}
-
+	// Note: WebSocket connects directly (not through proxy)
+	// Only HTTP login needs proxy for TLS fingerprint bypass
 	conn, _, err := dialer.Dial(iqOptionWSURL, headers)
 	if err != nil {
 		return err

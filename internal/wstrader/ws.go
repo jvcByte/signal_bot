@@ -228,7 +228,7 @@ func (t *Trader) sendAndWait(name string, body interface{}, waitForName string) 
 	select {
 	case resp := <-ch:
 		return resp, nil
-	case <-time.After(15 * time.Second):
+	case <-time.After(45 * time.Second):
 		return nil, fmt.Errorf("timeout waiting for response to '%s'", name)
 	}
 }
