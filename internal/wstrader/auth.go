@@ -74,6 +74,13 @@ func (t *Trader) connectOnce() error {
 	}
 
 	t.logger.Info().Msg("✅ IQ Option WebSocket trader ready")
+
+	// Pre-warm asset cache so first trade doesn't wait
+	go func() {
+		t.logger.Info().Msg("Pre-fetching asset list...")
+		_, _, _, _ = t.getActiveIDFromAPI("EURUSD")
+	}()
+
 	return nil
 }
 

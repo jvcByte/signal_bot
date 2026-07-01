@@ -33,7 +33,14 @@ func (t *Trader) getActiveIDFromAPI(assetName string) (int, string, bool, bool) 
 	}, "underlying-list")
 
 	if err != nil {
-		// Fallback: sendMessage wrapper
+		// Fallback: try binary-option type
+		resp, err = t.sendAndWait("get-underlying-list", map[string]interface{}{
+			"type": "binary-option",
+		}, "underlying-list")
+	}
+
+	if err != nil {
+		// Last resort: sendMessage wrapper
 		type msg struct {
 			Name    string      `json:"name"`
 			Version string      `json:"version"`
