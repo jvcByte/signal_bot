@@ -102,7 +102,10 @@ func (t *Trader) httpLogin() error {
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Jar: t.jar}
+	client := &http.Client{
+		Jar:     t.jar,
+		Timeout: 15 * time.Second,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("POST login: %w", err)
