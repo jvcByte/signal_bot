@@ -11,17 +11,18 @@ run:
 # Connect: make warp-connect
 # Then: make run-warp
 run-warp:
-	HTTPS_PROXY=socks5://127.0.0.1:40000 go run cmd/bot/main.go -config configs/config.yaml
+	proxychains4 go run cmd/bot/main.go -config configs/config.yaml
 
 # First-time WARP setup
 warp-setup:
-	@echo "Installing Cloudflare WARP..."
+	@echo "Installing Cloudflare WARP + proxychains..."
 	curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
 	echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $$(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
-	sudo apt update -qq && sudo apt install cloudflare-warp -y
+	sudo apt update -qq && sudo apt install cloudflare-warp proxychains4 -y
 	warp-cli registration new
 	warp-cli mode proxy
-	@echo "✓ WARP installed. Run 'make warp-connect' to connect."
+	@echo '[ProxyList]\nsocks5 127.0.0.1 40000' | sudo tee /etc/proxychains4.conf
+	@echo "✓ WARP installed. Run 'make warp-connect' then 'make run-warp'."
 
 # Connect to WARP (run before make run-warp)
 warp-connect:

@@ -1,9 +1,11 @@
 package wstrader
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"golang.org/x/net/proxy"
 )
 
 // Connect logs in via HTTP, grabs SSID, then opens the WebSocket.
@@ -123,15 +126,14 @@ func (t *Trader) httpLogin() error {
 	req.Header.Set("Referer", "https://iqoption.com/")
 
 	// Use proxy if configured via HTTPS_PROXY or HTTP_PROXY env var
-	transport := http.DefaultTransport
-	if proxyURL := proxyFromEnv(); proxyURL != nil {
-		transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
-		t.logger.Info().Str("proxy", proxyURL.Host).Msg("🔀 Using proxy for HTTP login")
+	transport := buildTransport(proxyFromEnv())
+	if pURL := proxyFromEnv(); pURL != nil {
+		t.logger.Info().Str("proxy", pURL.Host).Msg("🔀 Using proxy for HTTP login")
 	}
 
 	client := &http.Client{
 		Jar:       t.jar,
-		Timeout:   15 * time.Second,
+		Timeout:   30 * time.Second,
 		Transport: transport,
 	}
 	resp, err := client.Do(req)
@@ -180,6 +182,27 @@ func proxyFromEnv() *url.URL {
 	return nil
 }
 
+// buildTransport returns an http.RoundTripper with proxy support.
+// Handles both HTTP and SOCKS5 proxies correctly.
+func buildTransport(proxyURL *url.URL) http.RoundTripper {
+	if proxyURL == nil {
+		return http.DefaultTransport
+	}
+	if proxyURL.Scheme == "socks5" || proxyURL.Scheme == "socks5h" {
+		dialer, err := proxy.FromURL(proxyURL, proxy.Direct)
+		if err == nil {
+			// Use DialContext for proper connection handling
+			if dc, ok := dialer.(interface {
+				DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+			}); ok {
+				return &http.Transport{DialContext: dc.DialContext}
+			}
+			return &http.Transport{Dial: dialer.Dial} //nolint:staticcheck
+		}
+	}
+	return &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+}
+
 func (t *Trader) dialWS() error {
 	headers := http.Header{}
 	headers.Set("Origin", "https://iqoption.com")
@@ -192,9 +215,17 @@ func (t *Trader) dialWS() error {
 	}
 
 	// Use proxy if configured
-	if proxyURL := proxyFromEnv(); proxyURL != nil {
-		dialer.Proxy = http.ProxyURL(proxyURL)
-		t.logger.Info().Str("proxy", proxyURL.Host).Msg("🔀 Using proxy for WebSocket")
+	if pURL := proxyFromEnv(); pURL != nil {
+		if pURL.Scheme == "socks5" || pURL.Scheme == "socks5h" {
+			d, err := proxy.FromURL(pURL, proxy.Direct)
+			if err == nil {
+				dialer.NetDial = d.Dial
+				t.logger.Info().Str("proxy", pURL.Host).Msg("🔀 Using SOCKS5 proxy for WebSocket")
+			}
+		} else {
+			dialer.Proxy = http.ProxyURL(pURL)
+			t.logger.Info().Str("proxy", pURL.Host).Msg("🔀 Using proxy for WebSocket")
+		}
 	}
 
 	conn, _, err := dialer.Dial(iqOptionWSURL, headers)
