@@ -23,23 +23,29 @@ func (t *Trader) Connect() error {
 	return nil
 }
 
-// connectOnce performs a single connect attempt
+// connectOnce performs a single connect attempt.
+// On reconnects, reuses the cached SSID to avoid triggering IQ Option's
+// suspicious login detection from repeated HTTP logins.
 func (t *Trader) connectOnce() error {
-	t.logger.Info().Msg("🔐 Logging in to IQ Option via HTTP...")
-	// Retry HTTP login up to 3 times
-	var loginErr error
-	for attempt := 1; attempt <= 3; attempt++ {
-		loginErr = t.httpLogin()
-		if loginErr == nil {
-			break
+	// Only do HTTP login if we don't have a valid SSID yet
+	if t.ssid == "" {
+		t.logger.Info().Msg("🔐 Logging in to IQ Option via HTTP...")
+		var loginErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			loginErr = t.httpLogin()
+			if loginErr == nil {
+				break
+			}
+			t.logger.Warn().Err(loginErr).Int("attempt", attempt).Msg("HTTP login failed, retrying...")
+			time.Sleep(time.Duration(attempt*5) * time.Second)
 		}
-		t.logger.Warn().Err(loginErr).Int("attempt", attempt).Msg("HTTP login failed, retrying...")
-		time.Sleep(time.Duration(attempt*3) * time.Second)
+		if loginErr != nil {
+			return fmt.Errorf("http login: %w", loginErr)
+		}
+		t.logger.Info().Str("ssid", t.ssid[:8]+"...").Msg("✓ SSID obtained")
+	} else {
+		t.logger.Info().Str("ssid", t.ssid[:8]+"...").Msg("🔑 Reusing cached SSID (no new HTTP login)")
 	}
-	if loginErr != nil {
-		return fmt.Errorf("http login: %w", loginErr)
-	}
-	t.logger.Info().Str("ssid", t.ssid[:8]+"...").Msg("✓ SSID obtained")
 
 	t.logger.Info().Msg("🔌 Connecting to IQ Option WebSocket...")
 	if err := t.dialWS(); err != nil {
@@ -198,8 +204,14 @@ func (t *Trader) wsAuth() error {
 	}
 	if err := json.Unmarshal(resp, &profile); err == nil {
 		if !profile.IsSuccessful && profile.Message != "" {
-			return fmt.Errorf("auth rejected: %s", profile.Message)
-		}
+				// If SSID expired, clear it so next connectOnce does a fresh HTTP login
+				if strings.Contains(strings.ToLower(profile.Message), "ssid") ||
+					strings.Contains(strings.ToLower(profile.Message), "unauthorized") {
+					t.ssid = ""
+					t.logger.Warn().Msg("SSID expired - will re-login on next attempt")
+				}
+				return fmt.Errorf("auth rejected: %s", profile.Message)
+			}
 		if len(profile.Balances) > 0 {
 			t.balancesMu.Lock()
 			t.balances = profile.Balances
