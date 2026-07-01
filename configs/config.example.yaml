@@ -1,149 +1,38 @@
 # ─────────────────────────────────────────────────────────────────
-# JVCBYTE BLITZ — Signal Bot Configuration
-# Copy this file to config.yaml and fill in your credentials.
+# Signal Bot — Configuration Example
+# Copy to config.yaml and fill in your credentials.
 # ─────────────────────────────────────────────────────────────────
 
-# ── Telegram ────────────────────────────────────────────────────
 telegram:
-  api_id: 12345678                    # Get from https://my.telegram.org
-  api_hash: "your_api_hash_here"
+  api_id: 12345678              # Get from https://my.telegram.org
+  api_hash: "your_api_hash"
   phone: "+1234567890"
-  channel_id: -1001234567890          # Channel ID where signals are posted/read
+  channel_id: -1003488226342    # Mexy Binary channel ID
   session_file: "session/telegram.session"
 
-# ── IQ Option ───────────────────────────────────────────────────
 iqoption:
-  email: "your_email@example.com"
+  email: "your@email.com"
   password: "your_password"
-  demo_mode: true                     # ⚠️  Always start on demo! Set false for real money.
+  demo_mode: true               # ⚠️  Always test on demo first!
 
-# ── Trading execution ────────────────────────────────────────────
 trading:
-  default_amount: 1.0                 # Default trade size ($)
-  max_concurrent_trades: 3            # Max open trades at once
-  min_balance: 30.0                   # Pause trading if balance drops below this
-  trade_delay_ms: 2000                # Delay between placing trades (ms)
-  max_daily_loss: 50.0                # Auto-pause if daily loss exceeds this ($)
+  default_amount: 1.0           # Trade size ($)
+  max_concurrent_trades: 3
+  min_balance: 30.0             # Pause if balance drops below this
+  trade_delay_ms: 2000
+  max_daily_loss: 50.0
 
-# ── Risk management ──────────────────────────────────────────────
 risk:
   enabled: true
-  max_trades_per_day: 0               # 0 = unlimited
-  min_signal_confidence: 0.85        # match analyzer.min_confidence for high-selectivity
-  martingale: true                    # Double stake after a loss
-  martingale_max: 3                   # Max martingale levels (0 = no cap)
+  max_trades_per_day: 0         # 0 = unlimited
+  min_signal_confidence: 0.60   # Minimum confidence to execute (0.0–1.0)
+  martingale: true              # Double stake after a loss
+  martingale_max: 3             # Max martingale levels (0 = no cap)
 
-# ── Signal Analyzer (JVCBYTE BLITZ signal generator) ─────────────
-analyzer:
-  # ── High-selectivity profile (fewer trades, higher win rate) ───
-  # Uncomment/adjust after backtesting. Defaults below are conservative.
-  signal_threshold: 6          # min weighted score (4=normal, 6=strict)
-  min_confidence: 0.85         # reject signals below 85% calibrated confidence
-  expiry_seconds: 120            # 2-minute trades (less noise than 30s)
-  signal_cooldown: 15          # minutes between signals on same asset
-
-  # Only trade in regimes that backtest well (skip Volatile/Breakout/Unknown)
-  allowed_regimes:
-    - Trending
-    - Ranging
-
-  # UTC hours with ≥70% win rate — export via backtest, then enable:
-  #   go run cmd/backtest/main.go -export-hours data/allowed_hours.json
-  allowed_hours_file: data/allowed_hours.json
-  # allowed_hours_utc: [8, 9, 14, 15]  # or set manually
-
-  calibration_path: data/confidence.json
-
-  # How often to scan the market (seconds)
-  interval_seconds: 60
-
-  # ── Asset type filter ──────────────────────────────────────────
-  # Choose which categories to analyze.
-  # Options: forex, crypto, stocks, indices, commodities
-  # Remove this section entirely to analyze everything in the assets list.
-  asset_types:
-    - forex
-    - crypto
-  # - stocks
-  # - indices
-  # - commodities
-
-  # ── Full asset list ───────────────────────────────────────────
-  # These are filtered by asset_types above.
-  # All names are IQ Option OTC asset names (verified).
-  assets:
-    # ── Forex OTC (24/7 availability)
-    - EURUSD
-    - GBPUSD
-    - AUDUSD
-    - USDJPY
-    - USDCAD
-    - USDCHF
-    - EURJPY
-    - GBPJPY
-    - AUDJPY
-    - AUDCAD
-    - EURGBP
-    - EURAUD
-    - EURCAD
-    - GBPAUD
-    - GBPCAD
-    - CHFJPY
-    - CADCHF
-    - AUDCHF
-    - AUDNZD
-    - NZDCAD
-    - NZDJPY
-    - GBPCHF
-    - GBPNZD
-
-    # ── Crypto OTC
-    - ETHUSD
-    - XRPUSD
-    - SOLUSD
-    - DOGECOIN
-    - CARDANO
-    - LTCUSD
-    - TONUSD
-    - BCHUSD
-
-    # ── Stocks OTC
-    - OPENAI
-    - ANTHROPIC
-    - TESLA
-    - APPLE
-    - AMAZON
-    - GOOGLE
-    - MSFT
-    - NVDA
-    - FB
-    - SNAP
-    - SPACEX
-    - PLTR
-
-    # ── Indices OTC
-    - SP500
-    - US30
-    - USNDAQ100
-    - GER30
-    - UK100
-    - EU50
-    - JP225
-    - AUS200
-    - HK33
-
-    # ── Commodities OTC
-    - XAUUSD
-    - XAGUSD
-    - USOUSD
-    - UKOUSD
-
-# ── Logging ──────────────────────────────────────────────────────
 logging:
-  level: "info"                       # debug / info / warn / error
+  level: "info"                 # debug / info / warn / error
   file: "logs/bot.log"
   console: true
 
-# ── Database ─────────────────────────────────────────────────────
 database:
   path: "data/trades.db"

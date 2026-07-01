@@ -41,7 +41,7 @@ Martingale Levels:
 	fmt.Println("✓ Signal parsed successfully!\n")
 	fmt.Printf("Asset:      %s\n", signal.Asset)
 	fmt.Printf("Direction:  %s\n", signal.Direction)
-	fmt.Printf("Expiry:     %d minutes\n", signal.Expiry)
+	fmt.Printf("Expiry:     %d seconds\n", signal.Expiry)
 	fmt.Printf("Confidence: %.0f%%\n", signal.Confidence*100)
 	fmt.Printf("Raw:        %s...\n", signal.Raw[:50])
 
