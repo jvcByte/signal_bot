@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -541,8 +542,11 @@ func (b *Bot) handleTradeResult(result wstrader.TradeResult) {
 func (b *Bot) tryMartingale(result wstrader.TradeResult) {
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			n := runtime.Stack(buf, false)
 			b.logger.Error().
 				Str("panic_msg", fmt.Sprintf("%v", r)).
+				Str("stack", string(buf[:n])).
 				Msg("panic recovered in tryMartingale")
 		}
 	}()
