@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -110,6 +111,64 @@ func (t *Trader) reconnectLoop() {
 }
 
 func (t *Trader) httpLogin() error {
+	// Use curl for HTTP login - Go's TLS fingerprint is blocked by IQ Option's WAF
+	// curl mimics a real browser's TLS handshake
+	args := []string{
+		"-s", "-X", "POST",
+		"https://auth.iqoption.com/api/v1.0/login",
+		"--max-time", "30",
+		"-H", "Content-Type: application/x-www-form-urlencoded",
+		"-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		"-H", "Accept: application/json",
+		"-H", "Origin: https://iqoption.com",
+		"-H", "Referer: https://iqoption.com/",
+		"-d", "email=" + url.QueryEscape(t.cfg.Email) + "&password=" + url.QueryEscape(t.cfg.Password),
+		"-c", "-", // output cookies to stdout
+	}
+
+	// Add proxy if set
+	if pURL := proxyFromEnv(); pURL != nil {
+		args = append(args, "--proxy", pURL.String())
+		t.logger.Info().Str("proxy", pURL.Host).Msg("🔀 Using proxy for HTTP login")
+	}
+
+	cmd := exec.Command("curl", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("curl login failed: %w", err)
+	}
+
+	body := string(out)
+
+	// Try JSON body for SSID
+	var loginResp struct {
+		Data struct {
+			SSID string `json:"ssid"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &loginResp); err == nil && len(loginResp.Data.SSID) > 8 {
+		t.ssid = loginResp.Data.SSID
+		t.logger.Info().Str("ssid", t.ssid[:8]+"...").Msg("✓ SSID obtained from curl")
+		return nil
+	}
+
+	// Parse cookies from curl -c - output for SSID
+	for _, line := range strings.Split(body, "\n") {
+		fields := strings.Fields(line)
+		// Netscape cookie format: domain flag path secure expiry name value
+		if len(fields) == 7 && fields[5] == "ssid" && len(fields[6]) > 8 {
+			t.ssid = fields[6]
+			t.logger.Info().Str("ssid", t.ssid[:8]+"...").Msg("✓ SSID obtained from cookie")
+			return nil
+		}
+	}
+
+	// Fallback: standard HTTP client (when not blocked)
+	t.logger.Debug().Str("curl_output", body[:min(200, len(body))]).Msg("curl login fallback")
+	return t.httpLoginStandard()
+}
+
+func (t *Trader) httpLoginStandard() error {
 	data := url.Values{}
 	data.Set("email", t.cfg.Email)
 	data.Set("password", t.cfg.Password)
@@ -124,11 +183,35 @@ func (t *Trader) httpLogin() error {
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Origin", "https://iqoption.com")
 	req.Header.Set("Referer", "https://iqoption.com/")
+	req.Close = true
 
 	// Use proxy if configured via HTTPS_PROXY or HTTP_PROXY env var
-	transport := buildTransport(proxyFromEnv())
-	if pURL := proxyFromEnv(); pURL != nil {
-		t.logger.Info().Str("proxy", pURL.Host).Msg("🔀 Using proxy for HTTP login")
+	// Go's http.ProxyFromEnvironment handles this automatically
+	pURL := proxyFromEnv()
+	var transport http.RoundTripper
+	if pURL != nil {
+		t.logger.Info().Str("proxy", pURL.Host).Str("scheme", pURL.Scheme).Msg("🔀 Using proxy for HTTP login")
+		if pURL.Scheme == "socks5" || pURL.Scheme == "socks5h" {
+			dialer, err := proxy.FromURL(pURL, proxy.Direct)
+			if err == nil {
+				if dc, ok := dialer.(interface {
+					DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+				}); ok {
+					transport = &http.Transport{DialContext: dc.DialContext}
+				} else {
+					transport = &http.Transport{Dial: dialer.Dial} //nolint:staticcheck
+				}
+			}
+		} else {
+			// HTTP/HTTPS proxy - use env-aware transport
+			transport = &http.Transport{
+				Proxy:              http.ProxyURL(pURL),
+				ForceAttemptHTTP2: false, // force HTTP/1.1 to avoid WAF issues
+				TLSHandshakeTimeout: 10 * time.Second,
+			}
+		}
+	} else {
+		transport = http.DefaultTransport
 	}
 
 	client := &http.Client{
@@ -368,4 +451,11 @@ func (t *Trader) heartbeatLoop() {
 			t.logger.Debug().Msg("♥ heartbeat sent")
 		}
 	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
